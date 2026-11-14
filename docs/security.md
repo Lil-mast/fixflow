@@ -130,10 +130,16 @@ later adds contact data or private messages, add a second factor or an account.
 | `create_upload_url` | `s3:PutObject` on `incoming/*` | `s3:GetObject`, `s3:DeleteObject`, DynamoDB |
 | `submit_report` | `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` on `incoming/*` and `evidence/*`; `dynamodb:PutItem`/`GetItem` on reports; `dynamodb:PutItem` on events; `states:StartExecution` | `dynamodb:Scan`, `dynamodb:DeleteTable`, `s3:*` on the web bucket |
 | `get_public_report` | `dynamodb:Query` on `GSI2`; `dynamodb:GetItem` on reports | `dynamodb:Scan`, events table, S3 |
+| `get_public_events` | `dynamodb:Query` on the events table | `dynamodb:Scan`, writes, S3 |
+| `respond_clarification` | `dynamodb:GetItem`/`UpdateItem` on reports; `dynamodb:PutItem` on events; `states:StartExecution` | S3, tokens, `states:StopExecution` |
 | `get_reports` | `dynamodb:Query` on `GSI1` and `GSI3` | `dynamodb:Scan`, writes |
 | `get_report` | `dynamodb:GetItem` on reports; `dynamodb:Query` on events; `s3:GetObject` on evidence for presigning | Writes, public buckets |
+| `validate_report` | `dynamodb:GetItem` on reports; `s3:GetObject` on evidence | Writes, Step Functions control plane |
 | `review_report` / `assign_report` / `submit_resolution` / `verify_resolution` | Conditional updates on reports; `PutItem` on events; `GetItem`/`UpdateItem` on tokens; `states:SendTaskSuccess` | `states:StartExecution`, `states:StopExecution`, `dynamodb:DeleteItem` on events |
+| `submit_resolution` (S3) | `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` on `incoming/resolution/*` and `resolution/*` | Report evidence prefixes, web bucket |
+| `create_resolution_upload_url` | `s3:PutObject` on `incoming/resolution/*` | `s3:GetObject`, DynamoDB |
 | `transition_report` | `dynamodb:UpdateItem` on reports; `dynamodb:PutItem` on events | `dynamodb:DeleteItem`, `dynamodb:UpdateItem` on events |
+| `record_workflow_failure` | `dynamodb:UpdateItem` on reports; `dynamodb:PutItem` on events | S3, Step Functions control plane |
 | `store_task_token` | `dynamodb:PutItem` on tokens | Reports, S3 |
 | `calculate_priority` | `dynamodb:UpdateItem` on reports | S3, Step Functions control plane |
 | `get_metrics` | `dynamodb:Query` on `GSI1` and `GSI3` | `dynamodb:Scan` |

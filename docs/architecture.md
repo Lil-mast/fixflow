@@ -486,7 +486,7 @@ diverges, and why. Each correction is reflected in the API, data model, or secur
 | 11 | Client-supplied S3 key | A client could claim another upload or a key it does not own. | Presigned POST binds the exact key, content type, size, `reportId`, and `uploadId`; submit verifies object metadata. |
 | 12 | "Keep the frontend bucket separate" | Correct, but the delivery mechanism is unspecified. | Separate `FixFlowWeb` and `FixFlowEvidence`; CloudFront OAC for the web bucket; no public S3 access. |
 | 13 | "Use idempotency keys or conditional writes" | No mechanism chosen. | Client-generated `reportId` plus conditional puts; `version` plus `expectedVersion` for transitions. |
-| 14 | Priority rules not published | "Transparent" is a claim without the rule table. | Publish severity and category weights, score bands, and worked examples in [data model](data-model.md#priority-rules). |
+| 14 | Priority rules not published | "Transparent" is a claim without the rule table. | Publish severity and category weights, score bands, and worked examples in [data model](data-model.md#8-priority-rules). |
 | 15 | Metrics can include seeded data | Simulated outcomes could be presented as real. | `dataSource = DEMO` on seeded records; metrics exclude demo data by default; dashboard shows a demo badge. |
 | 16 | Step Functions input unspecified | Execution history could retain PII. | Execution input carries only `reportId` and `publicRef`. |
 | 17 | "Monday, November 16 at 9:00 PM EAT" submission target | The time-zone conversion was easy to misread against the Pacific deadline. | State both: 9:00 PM EAT = 10:00 AM Pacific, three hours before the 1:00 PM Pacific deadline. |

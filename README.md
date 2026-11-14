@@ -193,7 +193,8 @@ fixflow/
 │   ├── architecture.md
 │   ├── api.md
 │   ├── data-model.md
-│   └── security.md
+│   ├── security.md
+│   └── screenshots/
 ├── scripts/
 │   ├── seed_demo_data.py
 │   └── cleanup.sh
@@ -259,7 +260,7 @@ Parameter Store or Secrets Manager and read it from Lambda.
 ## Demo
 
 A three-minute demo should show the live application, not slides alone. The full storyboard
-is in [docs/architecture.md](docs/architecture.md#demo-storyboard). In short:
+is in [docs/architecture.md](docs/architecture.md#13-demo-storyboard). In short:
 
 1. **0:00-0:25** - The gap between reporting an issue and knowing whether action followed.
 2. **0:25-0:55** - Submit a report with a photo and receive a tracking reference.
@@ -303,6 +304,8 @@ outcomes, not tasks.
 - [Data model](docs/data-model.md) - DynamoDB keys and indexes, S3 layout, enums, and priority rules.
 - [Security and privacy](docs/security.md) - threat model, authorization matrix, upload controls, token handling, and privacy rules.
 
+Source blueprint: [FixFlow_AWS_Serverless_Builder_Weekend_Plan.pdf](FixFlow_AWS_Serverless_Builder_Weekend_Plan.pdf).
+
 ## Corrections applied to the source blueprint
 
 The source PDF is a strong plan, but several details were incomplete or inconsistent. The
@@ -322,18 +325,7 @@ docs resolve them explicitly. The most important corrections are:
 12. **The submission target wording was ambiguous.** The deadline is Monday 16 November 2026 at 1:00 PM Pacific (Tuesday 17 November at 00:00 East Africa Time). A safe internal target is Monday 16 November at 9:00 PM EAT, which is 10:00 AM Pacific and leaves a three-hour buffer before the deadline.
 
 The full list, including lower-level API and model changes, is in
-[docs/architecture.md](docs/architecture.md#corrections-to-the-source-blueprint).
-
-## Open questions
-
-These do not block the docs, but they should be decided before the build starts:
-
-- Which AWS region and account will host the demo? The docs use `<AWS_REGION>` and `us-east-1` in examples.
-- Should residents optionally leave an email address for follow-up, or should the MVP collect no contact data at all?
-- Is a custom domain required, or is the CloudFront domain acceptable for the submission?
-- Should AWS WAF be enabled for rate limiting, or is API Gateway stage throttling enough for the weekend?
-- Do we want a map picker, or is an area label plus optional browser geolocation sufficient?
-- Is the maintenance team modeled only as a free-text label in the MVP, or as a Cognito group later?
+[docs/architecture.md](docs/architecture.md#12-corrections-to-the-source-blueprint).
 
 ## License
 

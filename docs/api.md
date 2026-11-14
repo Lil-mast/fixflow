@@ -27,7 +27,9 @@ Related documents:
 ### Content type and encoding
 
 - Requests and responses are `application/json; charset=utf-8`, except S3 uploads, which use `multipart/form-data`.
-- Timestamps are ISO 8601 UTC with a `Z` suffix, for example `2026-11-14T18:30:00Z`.
+- Timestamps are ISO 8601 UTC with a `Z` suffix, for example `2026-11-14T18:30:00Z`. The
+  server stores and returns millisecond precision when available; clients must parse ISO
+  8601 and must not assume a fixed fractional length.
 - IDs are opaque strings. Clients must not parse them.
 - Unknown request fields are rejected with `400 VALIDATION_ERROR`. This prevents accidental mass assignment.
 
@@ -580,7 +582,7 @@ administrator can close an unresponsive report or re-send a clarification reques
 | --- | --- |
 | `decision` | `APPROVE`, `REJECT`, or `REQUEST_INFO`. |
 | `comment` | Optional for `APPROVE`; required for `REJECT` and `REQUEST_INFO`. 1 to 2,000 characters. Admin-only. |
-| `publicMessage` | Optional. 1 to 280 characters. Shown on the public timeline. |
+| `publicMessage` | Optional. 1 to 280 characters. Shown on the public timeline. If omitted, the server uses a generic default for the action. |
 | `expectedVersion` | Required. Must match the current report version. |
 
 **Response `200`**
@@ -596,9 +598,9 @@ administrator can close an unresponsive report or re-send a clarification reques
 
 **Rules**
 
-- `APPROVE`: `REVIEW_PENDING|REVIEW_EXPIRED -> APPROVED`; sets `reviewedAt` and `approvedAt`.
-- `REJECT`: `REVIEW_PENDING|REVIEW_EXPIRED|NEEDS_INFO -> REJECTED`; sets `reviewedAt`; requires a reason.
-- `REQUEST_INFO`: `REVIEW_PENDING|REVIEW_EXPIRED -> NEEDS_INFO`; sets `requiredActor = RESIDENT`.
+- `APPROVE`: `REVIEW_PENDING|REVIEW_EXPIRED -> APPROVED`; sets `approvedAt` and, if absent, `reviewedAt`.
+- `REJECT`: `REVIEW_PENDING|REVIEW_EXPIRED|NEEDS_INFO -> REJECTED`; sets `reviewedAt` if absent; requires a reason.
+- `REQUEST_INFO`: `REVIEW_PENDING|REVIEW_EXPIRED -> NEEDS_INFO`; sets `requiredActor = RESIDENT` and `reviewedAt` if absent.
 - `REQUEST_INFO` from `NEEDS_INFO` stays in `NEEDS_INFO`: it updates the request and appends
   a new `INFO_REQUESTED` event, which is useful when the original request was lost.
 - The status update and event insert are one DynamoDB transaction.

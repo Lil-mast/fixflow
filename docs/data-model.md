@@ -77,9 +77,10 @@ existing item.
 | `reviewedAt` | String timestamp | No | First administrator decision time. Used for the submission-to-review metric. |
 | `approvedAt` | String timestamp | No | Approval time. Used for the approval-to-resolution metric. |
 | `resolvedAt` | String timestamp | No | Verified resolution time. |
-| `requiredActor` | String enum | No | `RESIDENT` when the report is `NEEDS_INFO`. |
-| `reasonCode` | String | No | Machine-readable reason for `NEEDS_INFO`, `VALIDATION_FAILED`, or `REVIEW_EXPIRED`. |
-| `workflowStatus` | String enum | Yes | `PENDING`, `STARTED`, `FAILED`, `COMPLETED`. Operational state, not lifecycle state. |
+| `requiredActor` | String enum | No | `RESIDENT` when the report is `NEEDS_INFO`; cleared when leaving `NEEDS_INFO`. |
+| `reasonCode` | String | No | Machine-readable reason for `NEEDS_INFO`, `VALIDATION_FAILED`, or `REVIEW_EXPIRED`; cleared when the condition is resolved. |
+| `publicSummary` | String | No | Latest curated public message for the tracking page. Updated in the same transaction as a public event. |
+| `workflowStatus` | String enum | Yes | `PENDING`, `STARTED`, `FAILED`, `COMPLETED`. Operational state, not lifecycle state. `COMPLETED` means the current execution ended, not that the report is resolved. |
 | `workflowExecutionArn` | String | No | Latest Step Functions execution ARN. Not returned publicly. |
 | `dataSource` | String enum | Yes | `LIVE` or `DEMO`. Seeded records are `DEMO`. |
 | `createdAt` | String timestamp | Yes | Submission time. |
@@ -131,6 +132,7 @@ after the timeout, and the decision endpoint accepts a decision from either
   "evidenceKey": "evidence/e3b0c442-98fc-4c14-9afb-f4c8996fb924/4f1c2d8e-7a6b-4c3d-9e2f-1a2b3c4d5e6f.jpg",
   "evidenceContentType": "image/jpeg",
   "evidenceSize": 2483910,
+  "publicSummary": "Report received and awaiting review.",
   "workflowStatus": "STARTED",
   "workflowExecutionArn": "arn:aws:states:<region>:<account>:execution:fixflow-report-workflow:e3b0c442-98fc-4c14-9afb-f4c8996fb924",
   "dataSource": "LIVE",
@@ -172,6 +174,10 @@ Sort key:      GSI1SK = <createdAt>#<reportId>
 Projection:    INCLUDE reportId, publicRef, category, area, status, priority,
                         assignedTeam, createdAt, updatedAt, dataSource
 ```
+
+Every transition updates `GSI1PK` to the new status. `GSI1SK` stays
+`<createdAt>#<reportId>`, so the report appears in the new status partition immediately and
+disappears from the old one. `transition_report` is the only writer that changes these keys.
 
 **GSI2 - public reference index**
 
@@ -270,6 +276,14 @@ gives a stable order even when two events share a millisecond.
 Public timeline rule: an event is visible only when `visibility = PUBLIC` **and**
 `publicMessage` is present. The handler that writes the event decides visibility; the
 public read path does not infer it from `action`.
+
+The raw resident clarification text is stored in `comment` (admin-only). The public
+`CLARIFICATION_PROVIDED` event uses a generic `publicMessage` such as "Resident provided
+additional information." Do not copy resident text into `publicMessage`.
+
+When `transition_report` writes a `PUBLIC` event with a `publicMessage`, it also sets the
+report's `publicSummary` in the same transaction. The public lookup then needs one
+`GetItem` and does not have to query the event history for the latest message.
 
 ### Append-only enforcement
 
@@ -496,9 +510,14 @@ The MVP computes averages by paging `GSI3`. At demo volume this is fine. If the 
 move the aggregates to a small metrics table updated from DynamoDB Streams, or precompute
 them on a schedule. Do not add that complexity this weekend.
 
+Status counts use `FilterExpression dataSource = LIVE` unless demo mode is on. DynamoDB
+still reads the filtered items for a `COUNT`, which is acceptable at demo volume. A
+production design would separate demo and live data into different partitions or tables.
+
 ## 10. Demo data
 
-- Seed records use deterministic UUIDs so the seed script is idempotent.
+- Seed records use deterministic UUIDs so the seed script is idempotent. The script uses
+  conditional puts and does not overwrite a record that already exists.
 - Every seed record has `dataSource = DEMO`.
 - The admin dashboard shows a "Demo data" badge whenever any demo record is on screen.
 - Metrics exclude demo records by default. The toggle to include them is explicit.
