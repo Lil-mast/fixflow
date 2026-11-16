@@ -2,9 +2,11 @@
 
 > From community reports to accountable action.
 
-**Build status: pre-build.** This repository currently contains the source blueprint and
-design documentation. The application, infrastructure, and demo video are not implemented
-yet. Anything described as deployed or measured is a target, not a claim.
+**Build status: Phase 1, deployable foundation.** The repository contains the design
+documentation, a SAM template, three DynamoDB tables, two private S3 buckets, CloudFront
+with Origin Access Control, a Cognito admin user pool, and a tested `GET /health` Lambda.
+Report submission, the Step Functions workflow, the admin APIs, and the frontend are not
+implemented yet. Anything described as deployed or measured is a target, not a claim.
 
 FixFlow is a serverless civic infrastructure reporting and resolution platform. Residents
 report problems such as potholes, broken streetlights, leaking public water pipes, damaged
@@ -205,30 +207,41 @@ fixflow/
 The SAM template is the source of truth for infrastructure. Do not create production
 resources manually in the console when they can be defined and reproduced in code.
 
-## Local development (planned)
+## Local development
 
-These commands describe the target workflow. They will not work until the scaffold is
-committed.
-
-**Prerequisites:** Node.js 20+, Python 3.12, AWS SAM CLI, AWS CLI v2, and an AWS account
-with credentials configured for the target region.
+**Prerequisites:** Node.js 20+, Python 3.12+, `uv`, AWS SAM CLI, AWS CLI v2, and an AWS
+account with credentials configured for the target region.
 
 ```bash
-# Frontend
+# Install backend dependencies
+make install
+
+# Run unit tests and offline checks
+make test
+make check
+
+# Validate the SAM template (requires the SAM CLI)
+make sam-validate
+
+# Build and deploy the backend
+make build
+make deploy STACK_NAME=fixflow REGION=us-east-1 STAGE=dev \
+  ALLOWED_ORIGIN=http://localhost:5173
+```
+
+`make help` lists every target and its variables.
+
+The first deployment uses `ALLOWED_ORIGIN=http://localhost:5173` because the CloudFront
+domain does not exist yet. Read the `WebUrl` stack output, then redeploy with
+`ALLOWED_ORIGIN=https://<distribution-domain>` so the API CORS, evidence bucket CORS, and
+Cognito callback URLs all point at the deployed frontend.
+
+The frontend is not implemented yet. When it exists, it will run with:
+
+```bash
 cd frontend
 npm install
 npm run dev
-
-# Backend unit tests
-python -m pytest backend/tests
-
-# Build and run the API locally
-sam build
-sam local start-api
-
-# Deploy the backend
-sam build
-sam deploy --guided --stack-name fixflow
 ```
 
 No CI/CD pipeline is required or planned for the challenge. Deployment is a local

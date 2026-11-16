@@ -1,0 +1,1 @@
+"""Shallow liveness endpoint."""

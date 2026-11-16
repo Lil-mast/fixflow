@@ -1,0 +1,20 @@
+[project]
+name = "fixflow"
+version = "0.1.0"
+description = "FixFlow serverless civic issue reporting backend"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "boto3>=1.35,<2",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pyyaml>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["backend"]
+addopts = "-q"
