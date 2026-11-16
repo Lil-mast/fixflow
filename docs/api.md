@@ -504,6 +504,9 @@ page.
 
 **Errors:** `400`, `401`, `403`, `429`.
 
+`category` and `includeDemo` are applied after the index query, so a page can contain fewer
+than `limit` items. Keep requesting pages while `nextCursor` is non-null.
+
 ### 5.2 `GET /admin/reports/{reportId}`
 
 Return the full report, audit history, and short-lived evidence URLs.
@@ -527,6 +530,7 @@ Return the full report, audit history, and short-lived evidence URLs.
     "longitude": 39.2803
   },
   "assignedTeam": null,
+  "assignedAt": null,
   "evidence": {
     "url": "https://fixflow-evidence.s3.<region>.amazonaws.com/evidence/...?X-Amz-Signature=...",
     "contentType": "image/jpeg",
@@ -549,6 +553,7 @@ Return the full report, audit history, and short-lived evidence URLs.
       "newStatus": "SUBMITTED",
       "timestamp": "2026-11-14T18:30:00Z",
       "comment": null,
+      "publicMessage": "Report received.",
       "visibility": "PUBLIC"
     }
   ]
@@ -556,6 +561,8 @@ Return the full report, audit history, and short-lived evidence URLs.
 ```
 
 - Evidence URLs expire in 5 minutes and are generated on read. They are not stored.
+- `resolution` is `null` until completion evidence is submitted. Once present it includes
+  the short-lived `url`, `contentType`, `note`, `submittedAt`, and `rejectionReason`.
 - `Cache-Control: no-store` is mandatory.
 - `pendingTaskToken` and any token table data are never returned.
 
@@ -649,8 +656,12 @@ does not create team identities.
 **Rules**
 
 - Allowed only from `APPROVED`.
-- Sets `assignedAt` and `assignedTeam`.
+- Sets `assignedAt` and `assignedTeam`, increments `version`, and appends a `TEAM_ASSIGNED`
+  event in the same transaction.
 - Resumes the `ASSIGNMENT` callback.
+- A stale `expectedVersion` returns `409 CONFLICT`; a report in another status returns
+  `409 INVALID_STATE_TRANSITION`; a missing or consumed assignment token returns
+  `409 TASK_EXPIRED`.
 
 **Errors:** `400`, `401`, `403`, `404`, `409`.
 
@@ -674,10 +685,10 @@ Create a presigned POST for resolution evidence. One image per resolution in the
   "upload": {
     "url": "https://fixflow-evidence.s3.<region>.amazonaws.com/",
     "fields": {
-      "key": "incoming/resolution/e3b0c442-98fc-4c14-9afb-f4c8996fb924/9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d.jpg",
+      "key": "incoming/resolution/e3b0c442-98fc-4c14-9afb-f4c8996fb924/9a8b7c6d-5e4f-4a3b-8c1d-0e9f8a7b6c5d.jpg",
       "Content-Type": "image/jpeg",
       "x-amz-meta-report-id": "e3b0c442-98fc-4c14-9afb-f4c8996fb924",
-      "x-amz-meta-upload-id": "9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d",
+      "x-amz-meta-upload-id": "9a8b7c6d-5e4f-4a3b-8c1d-0e9f8a7b6c5d",
       "policy": "...",
       "x-amz-algorithm": "AWS4-HMAC-SHA256",
       "x-amz-credential": "...",
@@ -685,8 +696,8 @@ Create a presigned POST for resolution evidence. One image per resolution in the
       "x-amz-signature": "..."
     }
   },
-  "objectKey": "incoming/resolution/e3b0c442-98fc-4c14-9afb-f4c8996fb924/9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d.jpg",
-  "uploadId": "9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d",
+  "objectKey": "incoming/resolution/e3b0c442-98fc-4c14-9afb-f4c8996fb924/9a8b7c6d-5e4f-4a3b-8c1d-0e9f8a7b6c5d.jpg",
+  "uploadId": "9a8b7c6d-5e4f-4a3b-8c1d-0e9f8a7b6c5d",
   "expiresAt": "2026-11-14T19:15:00Z"
 }
 ```
@@ -706,8 +717,8 @@ Submit completion evidence and a note. Accepted only from `IN_PROGRESS`.
 ```json
 {
   "evidence": {
-    "objectKey": "incoming/resolution/e3b0c442-98fc-4c14-9afb-f4c8996fb924/9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d.jpg",
-    "uploadId": "9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d",
+    "objectKey": "incoming/resolution/e3b0c442-98fc-4c14-9afb-f4c8996fb924/9a8b7c6d-5e4f-4a3b-8c1d-0e9f8a7b6c5d.jpg",
+    "uploadId": "9a8b7c6d-5e4f-4a3b-8c1d-0e9f8a7b6c5d",
     "contentType": "image/jpeg",
     "contentLength": 3120044
   },
@@ -738,8 +749,14 @@ Submit completion evidence and a note. Accepted only from `IN_PROGRESS`.
 **Rules**
 
 - `IN_PROGRESS -> RESOLUTION_PENDING`.
-- Sets `resolutionEvidenceKey`, `resolutionNote`, and `resolutionSubmittedAt`.
+- Verifies the uploaded object metadata, copies it to the private
+  `resolution/<reportId>/` prefix, and stores `resolutionEvidenceKey`,
+  `resolutionContentType`, `resolutionSize`, `resolutionNote`, and `resolutionSubmittedAt`.
+- Clears any previous `resolutionRejectionReason` so a resubmission starts clean.
 - Resumes the `RESOLUTION` callback.
+- A stale `expectedVersion` returns `409 CONFLICT`; a report in another status returns
+  `409 INVALID_STATE_TRANSITION`; a missing or consumed resolution token returns
+  `409 TASK_EXPIRED`.
 
 **Errors:** `400`, `401`, `403`, `404`, `409`, `413`, `415`, `422`.
 
@@ -779,10 +796,15 @@ Verify or reject the submitted resolution evidence.
 
 **Rules**
 
-- `VERIFIED`: `RESOLUTION_PENDING -> RESOLVED`; sets `resolvedAt`.
-- `REJECTED`: `RESOLUTION_PENDING -> IN_PROGRESS`; stores `resolutionRejectionReason`.
+- `VERIFIED`: `RESOLUTION_PENDING -> RESOLVED`; sets `resolvedAt` and clears
+  `resolutionRejectionReason`.
+- `REJECTED`: `RESOLUTION_PENDING -> IN_PROGRESS`; stores `resolutionRejectionReason` and
+  keeps the completion evidence for context.
 - Resumes the `VERIFICATION` callback.
 - A resolution is never marked `RESOLVED` by the system or by AI.
+- A stale `expectedVersion` returns `409 CONFLICT`; a report in another status returns
+  `409 INVALID_STATE_TRANSITION`; a missing or consumed verification token returns
+  `409 TASK_EXPIRED`.
 
 **Errors:** `400`, `401`, `403`, `404`, `409`.
 

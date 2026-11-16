@@ -8,7 +8,7 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
-from shared.errors import ReviewExpired, ServiceUnavailable
+from shared.errors import ServiceUnavailable, TaskExpired
 
 
 class WorkflowClient:
@@ -57,5 +57,5 @@ class WorkflowClient:
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code")
             if code in {"InvalidToken", "TaskTimedOut"}:
-                raise ReviewExpired() from exc
+                raise TaskExpired() from exc
             raise ServiceUnavailable("The workflow could not be resumed.") from exc

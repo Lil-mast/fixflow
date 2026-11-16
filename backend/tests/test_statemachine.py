@@ -14,6 +14,7 @@ SUBSTITUTIONS = {
     "StoreTaskTokenFunctionArn": "arn:aws:lambda:us-east-1:123456789012:function:token",
     "RecordWorkflowFailureFunctionArn": "arn:aws:lambda:us-east-1:123456789012:function:failure",
     "ReviewTimeoutSeconds": "259200",
+    "LifecycleTimeoutSeconds": "1209600",
 }
 
 
@@ -105,3 +106,41 @@ def test_validation_failure_is_a_business_branch_not_a_task_failure() -> None:
     states = load_definition()["States"]
     assert states["ValidationResult"]["Type"] == "Choice"
     assert states["MarkValidationFailed"]["End"] is True
+
+
+def test_approved_reports_enter_the_assignment_wait() -> None:
+    states = load_definition()["States"]
+    assert states["MarkApproved"]["Next"] == "StoreAssignmentToken"
+
+    for state_name, task_type in (
+        ("StoreAssignmentToken", "ASSIGNMENT"),
+        ("StoreResolutionToken", "RESOLUTION"),
+        ("StoreVerificationToken", "VERIFICATION"),
+    ):
+        state = states[state_name]
+        assert state["Resource"].endswith("lambda:invoke.waitForTaskToken")
+        assert state["TimeoutSeconds"] == 1209600
+        assert state["Parameters"]["Payload"]["taskType"] == task_type
+        timeout_catch = [
+            catcher for catcher in state["Catch"] if "States.Timeout" in catcher["ErrorEquals"]
+        ]
+        assert timeout_catch
+        assert timeout_catch[0]["Next"] == state_name
+
+
+def test_verification_decision_closes_or_reopens_the_report() -> None:
+    states = load_definition()["States"]
+    assert states["VerificationDecision"]["Choices"] == [
+        {
+            "Variable": "$.verification.decision",
+            "StringEquals": "VERIFIED",
+            "Next": "MarkResolved",
+        },
+        {
+            "Variable": "$.verification.decision",
+            "StringEquals": "REJECTED",
+            "Next": "MarkInProgressAfterRejection",
+        },
+    ]
+    assert states["MarkResolved"]["End"] is True
+    assert states["MarkInProgressAfterRejection"]["Next"] == "StoreResolutionToken"

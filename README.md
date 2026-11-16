@@ -2,14 +2,15 @@
 
 > From community reports to accountable action.
 
-**Build status: Phase 3, workflow and review slice.** The repository contains the design
+**Build status: Phase 4, complete lifecycle backend.** The repository contains the design
 documentation, a deployable SAM stack, the DynamoDB tables and private storage, the Cognito
-admin pool, a tested `GET /health` endpoint, presigned evidence uploads, transactional
-report submission, public tracking with a filtered projection, and a Step Functions workflow
-that validates, scores, and waits for an administrator review. The review endpoint requires
-a Cognito JWT with the `admin` group, consumes the task token transactionally, and resumes
-the workflow. Assignment, resolution, verification, and the frontend are not implemented
-yet. Anything described as deployed or measured is a target, not a claim.
+admin pool, a tested `GET /health` endpoint, presigned evidence uploads, transactional report
+submission, public tracking with a filtered projection, and a Step Functions workflow that
+validates, scores, waits for an administrator review, assignment, resolution evidence, and
+verification. Admin routes require a Cognito JWT with the `admin` group. The admin read APIs
+list and filter reports, return full detail with short-lived evidence URLs, and compute
+operational metrics with demo data excluded by default. The frontend is not implemented yet.
+Anything described as deployed or measured is a target, not a claim.
 
 FixFlow is a serverless civic infrastructure reporting and resolution platform. Residents
 report problems such as potholes, broken streetlights, leaking public water pipes, damaged
@@ -153,59 +154,52 @@ demo is idle.
 | Amazon SNS (optional) | Sends status notifications after the core workflow is stable. | Not in the critical path. |
 | Amazon CloudWatch | Logs, metrics, alarms, and dashboards. | Structured JSON logs; never log tokens or PII. |
 
-## Repository layout (planned)
+## Repository layout
 
 ```text
 fixflow/
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── features/
-│   │   │   ├── reports/
-│   │   │   ├── dashboard/
-│   │   │   └── tracking/
-│   │   ├── services/
-│   │   ├── types/
-│   │   └── main.tsx
-│   └── package.json
 ├── backend/
 │   ├── functions/
+│   │   ├── health/
 │   │   ├── create_upload_url/
 │   │   ├── submit_report/
 │   │   ├── get_public_report/
 │   │   ├── get_public_events/
-│   │   ├── respond_clarification/
-│   │   ├── get_reports/
-│   │   ├── get_report/
 │   │   ├── review_report/
 │   │   ├── assign_report/
 │   │   ├── create_resolution_upload_url/
 │   │   ├── submit_resolution/
 │   │   ├── verify_resolution/
-│   │   ├── get_metrics/
+│   │   ├── admin_list_reports/
+│   │   ├── admin_get_report/
+│   │   ├── admin_metrics/
 │   │   ├── validate_report/
 │   │   ├── calculate_priority/
 │   │   ├── transition_report/
 │   │   ├── store_task_token/
 │   │   └── record_workflow_failure/
 │   ├── shared/
-│   └── statemachines/
-│       └── report_workflow.asl.json
+│   ├── statemachines/
+│   │   └── report_workflow.asl.json
+│   └── tests/
 ├── infrastructure/
 │   └── template.yaml
 ├── docs/
 │   ├── architecture.md
 │   ├── api.md
 │   ├── data-model.md
-│   ├── security.md
-│   └── screenshots/
+│   └── security.md
 ├── scripts/
-│   ├── seed_demo_data.py
-│   └── cleanup.sh
+│   └── check_template.py
+├── Makefile
+├── pyproject.toml
 ├── README.md
 └── .gitignore
 ```
+
+The `frontend/` application, `scripts/seed_demo_data.py`, and `scripts/cleanup.sh` are
+planned; they are not implemented yet. The resident clarification endpoint is documented
+but also still planned.
 
 The SAM template is the source of truth for infrastructure. Do not create production
 resources manually in the console when they can be defined and reproduced in code.
@@ -266,6 +260,8 @@ Backend values are injected by SAM. Frontend values are build-time Vite variable
 | `ALLOWED_ORIGINS` | Lambda environment | Comma-separated exact browser origins allowed by CORS. |
 | `WEB_URL` | Lambda environment | Public frontend base URL used in tracking links. |
 | `REVIEW_TIMEOUT_SECONDS` | Lambda environment | Review task wait before a fresh token is issued. Default 259,200 (72 hours). |
+| `LIFECYCLE_TIMEOUT_SECONDS` | Lambda environment | Assignment, resolution, and verification wait before a fresh token is issued. Default 1,209,600 (14 days). |
+| `EVIDENCE_URL_EXPIRY_SECONDS` | Lambda environment | Lifetime of admin evidence download URLs. Fixed at 300 seconds. |
 | `VITE_API_BASE_URL` | Frontend build | API Gateway invoke URL. |
 | `VITE_AWS_REGION` | Frontend build | Cognito region. |
 | `VITE_COGNITO_USER_POOL_ID` | Frontend build | Admin user pool ID. |

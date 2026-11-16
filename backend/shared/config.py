@@ -29,6 +29,7 @@ class Settings:
     web_url: str = DEFAULT_WEB_URL
     upload_expiry_seconds: int = UPLOAD_EXPIRY_SECONDS
     review_timeout_seconds: int = REVIEW_TIMEOUT_SECONDS
+    evidence_url_expiry_seconds: int = 300
     state_machine_arn: str = ""
 
 
@@ -71,5 +72,6 @@ def load_settings() -> Settings:
         review_timeout_seconds=int(
             os.environ.get("REVIEW_TIMEOUT_SECONDS", REVIEW_TIMEOUT_SECONDS)
         ),
+        evidence_url_expiry_seconds=int(os.environ.get("EVIDENCE_URL_EXPIRY_SECONDS", 300)),
         state_machine_arn=os.environ.get("STATE_MACHINE_ARN", ""),
     )

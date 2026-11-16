@@ -34,8 +34,11 @@ SETTABLE_FIELDS = frozenset(
         "publicSummary",
         "reasonCode",
         "requiredActor",
+        "resolutionContentType",
+        "resolutionEvidenceKey",
         "resolutionNote",
         "resolutionRejectionReason",
+        "resolutionSize",
         "resolutionSubmittedAt",
         "resolvedAt",
         "reviewedAt",
@@ -75,6 +78,8 @@ def fields_for_target(target_status: str, report: dict[str, Any], now: str) -> d
         fields["reviewedAt"] = report.get("reviewedAt") or now
     elif target_status == "IN_PROGRESS":
         fields["assignedAt"] = report.get("assignedAt") or now
+    elif target_status == "RESOLUTION_PENDING":
+        fields["resolutionSubmittedAt"] = report.get("resolutionSubmittedAt") or now
     elif target_status == "RESOLVED":
         fields["resolvedAt"] = now
 

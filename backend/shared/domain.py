@@ -8,6 +8,7 @@ the admin boundary.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from shared.clock import now_iso
 from shared.ids import canonical_json, new_ulid, sha256_hex
@@ -15,6 +16,14 @@ from shared.priority import calculate_priority
 from shared.validation import ReportInput
 
 STATUS_SUBMITTED = "SUBMITTED"
+
+
+def _plain_number(value: object) -> object:
+    """DynamoDB returns numbers as ``Decimal``; JSON needs int or float."""
+
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -132,4 +141,107 @@ def public_event_projection(event: dict) -> dict:
         "status": event["newStatus"],
         "timestamp": event["timestamp"],
         "publicMessage": event.get("publicMessage"),
+    }
+
+
+def admin_list_projection(report: dict) -> dict:
+    return {
+        "reportId": report["reportId"],
+        "publicRef": report["publicRef"],
+        "category": report["category"],
+        "area": report["area"],
+        "status": report["status"],
+        "priority": report.get("priority"),
+        "assignedTeam": report.get("assignedTeam"),
+        "createdAt": report["createdAt"],
+        "updatedAt": report["updatedAt"],
+        "dataSource": report.get("dataSource", "LIVE"),
+    }
+
+
+def admin_event_projection(event: dict) -> dict:
+    return {
+        "eventId": event["eventId"],
+        "actorType": event.get("actorType"),
+        "action": event.get("action"),
+        "previousStatus": event.get("previousStatus"),
+        "newStatus": event.get("newStatus"),
+        "timestamp": event["timestamp"],
+        "comment": event.get("comment"),
+        "publicMessage": event.get("publicMessage"),
+        "visibility": event.get("visibility"),
+    }
+
+
+def admin_report_projection(
+    report: dict,
+    events: list[dict],
+    *,
+    evidence_url: str | None = None,
+    resolution_url: str | None = None,
+    evidence_expires_at: str | None = None,
+) -> dict:
+    """Full administrator view.
+
+    Raw S3 keys, request hashes, workflow ARNs, and task tokens never leave the backend.
+    Evidence is exposed only as a short-lived URL.
+    """
+
+    location = {"area": report["area"]}
+    stored_location = report.get("location") or {}
+    if "latitude" in stored_location:
+        location["latitude"] = _plain_number(stored_location["latitude"])
+    if "longitude" in stored_location:
+        location["longitude"] = _plain_number(stored_location["longitude"])
+
+    evidence = None
+    if report.get("evidenceKey"):
+        evidence = {
+            "url": evidence_url,
+            "contentType": report.get("evidenceContentType"),
+            "expiresAt": evidence_expires_at,
+        }
+
+    resolution = None
+    if any(
+        key in report
+        for key in (
+            "resolutionEvidenceKey",
+            "resolutionNote",
+            "resolutionSubmittedAt",
+        )
+    ):
+        resolution = {
+            "url": resolution_url,
+            "contentType": report.get("resolutionContentType"),
+            "note": report.get("resolutionNote"),
+            "submittedAt": report.get("resolutionSubmittedAt"),
+            "rejectionReason": report.get("resolutionRejectionReason"),
+        }
+
+    return {
+        "reportId": report["reportId"],
+        "publicRef": report["publicRef"],
+        "category": report["category"],
+        "description": report["description"],
+        "severity": report["severity"],
+        "priority": report.get("priority"),
+        "priorityScore": _plain_number(report.get("priorityScore")),
+        "status": report["status"],
+        "version": int(report["version"]),
+        "location": location,
+        "assignedTeam": report.get("assignedTeam"),
+        "assignedAt": report.get("assignedAt"),
+        "evidence": evidence,
+        "resolution": resolution,
+        "reasonCode": report.get("reasonCode"),
+        "requiredActor": report.get("requiredActor"),
+        "createdAt": report["createdAt"],
+        "updatedAt": report["updatedAt"],
+        "reviewedAt": report.get("reviewedAt"),
+        "approvedAt": report.get("approvedAt"),
+        "resolvedAt": report.get("resolvedAt"),
+        "workflowStatus": report.get("workflowStatus"),
+        "dataSource": report.get("dataSource", "LIVE"),
+        "events": [admin_event_projection(event) for event in events],
     }

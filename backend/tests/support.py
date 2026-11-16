@@ -144,11 +144,12 @@ def admin_api_event(
     body: dict[str, Any] | None = None,
     *,
     path_parameters: dict[str, str] | None = None,
+    query: dict[str, str] | None = None,
     groups: list[str] | str | tuple[str, ...] = ("admin",),
     subject: str = "admin-sub-1",
     origin: str | None = "http://localhost:5173",
 ) -> dict[str, Any]:
-    event = api_event(body, path_parameters=path_parameters, origin=origin)
+    event = api_event(body, path_parameters=path_parameters, query=query, origin=origin)
     event["requestContext"]["authorizer"] = {
         "jwt": {
             "claims": {
@@ -207,11 +208,13 @@ def seed_report(
     status: str = "SUBMITTED",
     version: int = 1,
     report_id: str | None = None,
+    **overrides: Any,
 ) -> dict[str, Any]:
     value = validate_report_input(sample_report_payload(report_id))
     built = build_new_report(value, public_ref=new_public_ref(), evidence_key=None)
     built.report["status"] = status
     built.report["version"] = version
     built.report["GSI1PK"] = f"STATUS#{status}"
+    built.report.update(overrides)
     repository.create_report(built.report, built.event)
     return built.report

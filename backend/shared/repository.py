@@ -33,8 +33,12 @@ class InvalidStatus(Exception):
     """Raised when the current status is not a legal source for the transition."""
 
 
-class ReviewTokenUnavailable(Exception):
-    """Raised when the review token is missing, consumed, or stale."""
+class TaskTokenUnavailable(Exception):
+    """Raised when a workflow task token is missing, consumed, or stale."""
+
+
+# Backwards-compatible name used by the review path and its tests.
+ReviewTokenUnavailable = TaskTokenUnavailable
 
 
 def _make_dynamo_safe(value: Any) -> Any:
@@ -287,7 +291,7 @@ class ReportRepository:
                 raise
             reasons = exc.response.get("CancellationReasons") or []
             if consume_token is not None and _cancelled(reasons, 2):
-                raise ReviewTokenUnavailable(report_id) from exc
+                raise TaskTokenUnavailable(report_id) from exc
 
             latest = self.get_report(report_id)
             if latest is None:
@@ -464,6 +468,149 @@ class ReportRepository:
         response = self.client.query(**request)
         items = [_deserialize(item) for item in response.get("Items", [])]
         return items, encode_cursor(response.get("LastEvaluatedKey"))
+
+    def list_events(
+        self,
+        report_id: str,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """Return the full audit history, oldest first, for an administrator."""
+
+        request: dict[str, Any] = {
+            "TableName": self.events_table,
+            "KeyConditionExpression": "reportId = :report_id",
+            "ExpressionAttributeValues": {":report_id": {"S": report_id}},
+            "ScanIndexForward": True,
+            "Limit": limit,
+        }
+        if cursor:
+            request["ExclusiveStartKey"] = decode_cursor(cursor)
+
+        response = self.client.query(**request)
+        items = [_deserialize(item) for item in response.get("Items", [])]
+        return items, encode_cursor(response.get("LastEvaluatedKey"))
+
+    def list_reports(
+        self,
+        *,
+        status: str | None = None,
+        category: str | None = None,
+        limit: int = 25,
+        cursor: str | None = None,
+        include_demo: bool = False,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """List reports newest first from the status or all-reports index.
+
+        ``category`` and the demo filter are applied after the index query because they are
+        not part of the index key. A page can therefore contain fewer than ``limit`` items;
+        the cursor still advances through the index.
+        """
+
+        if status:
+            index_name = "GSI1"
+            key_condition = "GSI1PK = :partition"
+            values: dict[str, Any] = {":partition": {"S": f"STATUS#{status}"}}
+        else:
+            index_name = "GSI3"
+            key_condition = "GSI3PK = :partition"
+            values = {":partition": {"S": "ALL"}}
+
+        request: dict[str, Any] = {
+            "TableName": self.reports_table,
+            "IndexName": index_name,
+            "KeyConditionExpression": key_condition,
+            "ExpressionAttributeValues": values,
+            "ScanIndexForward": False,
+            "Limit": limit,
+        }
+        if cursor:
+            request["ExclusiveStartKey"] = decode_cursor(cursor)
+
+        response = self.client.query(**request)
+        report_ids = [(item.get("reportId") or {}).get("S") for item in response.get("Items", [])]
+        records = self._batch_get_reports([rid for rid in report_ids if rid])
+
+        items: list[dict[str, Any]] = []
+        for report_id in report_ids:
+            report = records.get(report_id) if report_id else None
+            if report is None:
+                continue
+            if not include_demo and report.get("dataSource") == "DEMO":
+                continue
+            if category and report.get("category") != category:
+                continue
+            items.append(report)
+
+        return items, encode_cursor(response.get("LastEvaluatedKey"))
+
+    def all_reports(self, *, include_demo: bool = False) -> list[dict[str, Any]]:
+        """Page the all-reports index for metrics."""
+
+        collected: list[dict[str, Any]] = []
+        start_key: dict[str, Any] | None = None
+        while True:
+            request: dict[str, Any] = {
+                "TableName": self.reports_table,
+                "IndexName": "GSI3",
+                "KeyConditionExpression": "GSI3PK = :partition",
+                "ExpressionAttributeValues": {":partition": {"S": "ALL"}},
+                "Limit": 100,
+            }
+            if start_key:
+                request["ExclusiveStartKey"] = start_key
+
+            response = self.client.query(**request)
+            report_ids = [
+                (item.get("reportId") or {}).get("S") for item in response.get("Items", [])
+            ]
+            records = self._batch_get_reports([rid for rid in report_ids if rid])
+            for report_id in report_ids:
+                report = records.get(report_id) if report_id else None
+                if report is None:
+                    continue
+                if not include_demo and report.get("dataSource") == "DEMO":
+                    continue
+                collected.append(report)
+
+            start_key = response.get("LastEvaluatedKey")
+            if not start_key:
+                break
+
+        return collected
+
+    def _batch_get_reports(self, report_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+        found: dict[str, dict[str, Any]] = {}
+        pending = [report_id for report_id in dict.fromkeys(report_ids) if report_id]
+        attempts = 0
+        while pending and attempts < 3:
+            attempts += 1
+            unprocessed: list[str] = []
+            for start in range(0, len(pending), 100):
+                chunk = pending[start : start + 100]
+                response = self.client.batch_get_item(
+                    RequestItems={
+                        self.reports_table: {
+                            "Keys": [{"reportId": {"S": report_id}} for report_id in chunk],
+                            "ConsistentRead": True,
+                        }
+                    }
+                )
+                for item in (response.get("Responses") or {}).get(self.reports_table, []):
+                    record = _deserialize(item)
+                    found[record["reportId"]] = record
+                unprocessed_keys = (
+                    (response.get("UnprocessedKeys") or {})
+                    .get(self.reports_table, {})
+                    .get("Keys", [])
+                )
+                for key in unprocessed_keys:
+                    report_id = (key.get("reportId") or {}).get("S")
+                    if report_id:
+                        unprocessed.append(report_id)
+            pending = unprocessed
+        return found
 
 
 class WorkflowTokenRepository:

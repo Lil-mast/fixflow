@@ -19,6 +19,7 @@ from shared.errors import (
     InvalidStateTransition,
     NotFound,
     ReviewExpired,
+    TaskExpired,
 )
 from shared.http import handle_api, parse_json_body, path_parameter
 from shared.logging import log
@@ -26,7 +27,7 @@ from shared.repository import (
     InvalidStatus,
     ReportNotFound,
     ReportRepository,
-    ReviewTokenUnavailable,
+    TaskTokenUnavailable,
     VersionConflict,
     WorkflowTokenRepository,
 )
@@ -157,7 +158,7 @@ def handler(
             raise Conflict("The report changed since it was loaded. Refetch and retry.") from exc
         except InvalidStatus as exc:
             raise InvalidStateTransition(str(exc)) from exc
-        except ReviewTokenUnavailable as exc:
+        except TaskTokenUnavailable as exc:
             raise ReviewExpired() from exc
 
         if task_token is not None:
@@ -166,13 +167,13 @@ def handler(
                     task_token["taskToken"],
                     {"decision": request.decision},
                 )
-            except ReviewExpired:
+            except TaskExpired as exc:
                 log(
                     "error",
                     "review recorded but workflow token was no longer valid",
                     reportId=report_id,
                 )
-                raise
+                raise ReviewExpired() from exc
 
         log(
             "info",

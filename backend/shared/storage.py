@@ -27,6 +27,16 @@ class PresignedUpload:
     expires_at: str
 
 
+def _prefixes(purpose: str, report_id: str) -> tuple[str, str]:
+    """Return ``(incoming prefix, stored prefix)`` for a supported upload purpose."""
+
+    if purpose == "resolution":
+        return f"incoming/resolution/{report_id}", f"resolution/{report_id}"
+    if purpose == "report":
+        return f"incoming/{report_id}", f"evidence/{report_id}"
+    raise ValueError(f"Unsupported evidence purpose: {purpose}")
+
+
 class EvidenceStorage:
     def __init__(
         self,
@@ -42,18 +52,20 @@ class EvidenceStorage:
         self,
         request: UploadRequest,
         *,
+        purpose: str = "report",
         expires_in: int = 300,
     ) -> PresignedUpload:
+        incoming_prefix, _ = _prefixes(purpose, request.report_id)
         upload_id = new_uuid4()
         extension = CONTENT_TYPE_EXTENSIONS[request.content_type][0]
-        object_key = f"incoming/{request.report_id}/{upload_id}.{extension}"
+        object_key = f"{incoming_prefix}/{upload_id}.{extension}"
 
         fields = {
             "key": object_key,
             "Content-Type": request.content_type,
             "x-amz-meta-report-id": request.report_id,
             "x-amz-meta-upload-id": upload_id,
-            "x-amz-meta-purpose": "report",
+            "x-amz-meta-purpose": purpose,
         }
         conditions = [
             {"key": object_key},
@@ -61,7 +73,7 @@ class EvidenceStorage:
             ["content-length-range", 1, MAX_UPLOAD_BYTES],
             {"x-amz-meta-report-id": request.report_id},
             {"x-amz-meta-upload-id": upload_id},
-            {"x-amz-meta-purpose": "report"},
+            {"x-amz-meta-purpose": purpose},
         ]
 
         signed = self.client.generate_presigned_post(
@@ -78,7 +90,14 @@ class EvidenceStorage:
             expires_at=to_iso(seconds_from_now(expires_in)),
         )
 
-    def verify_and_copy(self, evidence: EvidenceInput, report_id: str) -> str:
+    def verify_and_copy(
+        self,
+        evidence: EvidenceInput,
+        report_id: str,
+        *,
+        purpose: str = "report",
+    ) -> str:
+        _, destination_prefix = _prefixes(purpose, report_id)
         head = self._head(evidence.object_key)
         metadata = head.get("Metadata") or {}
 
@@ -90,11 +109,11 @@ class EvidenceStorage:
             raise _evidence_mismatch("The uploaded file belongs to a different report.")
         if metadata.get("upload-id") != evidence.upload_id:
             raise _evidence_mismatch("The uploaded file identifier does not match.")
-        if metadata.get("purpose") != "report":
+        if metadata.get("purpose") != purpose:
             raise _evidence_mismatch("The uploaded file has an invalid purpose.")
 
         extension = CONTENT_TYPE_EXTENSIONS[evidence.content_type][0]
-        destination = f"evidence/{report_id}/{evidence.upload_id}.{extension}"
+        destination = f"{destination_prefix}/{evidence.upload_id}.{extension}"
         self.client.copy_object(
             Bucket=self.bucket,
             Key=destination,
@@ -102,6 +121,17 @@ class EvidenceStorage:
             MetadataDirective="COPY",
         )
         return destination
+
+    def presign_download(self, object_key: str | None, *, expires_in: int = 300) -> str | None:
+        """Return a short-lived GET URL for a private evidence object."""
+
+        if not object_key:
+            return None
+        return self.client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self.bucket, "Key": object_key},
+            ExpiresIn=expires_in,
+        )
 
     def _head(self, object_key: str) -> dict[str, Any]:
         try:

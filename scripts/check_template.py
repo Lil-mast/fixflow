@@ -29,6 +29,13 @@ REQUIRED_RESOURCES = {
     "StoreTaskTokenFunction",
     "RecordWorkflowFailureFunction",
     "ReviewReportFunction",
+    "AssignReportFunction",
+    "CreateResolutionUploadUrlFunction",
+    "SubmitResolutionFunction",
+    "VerifyResolutionFunction",
+    "AdminListReportsFunction",
+    "AdminGetReportFunction",
+    "AdminMetricsFunction",
     "ReportWorkflowStateMachine",
     "WorkflowLogGroup",
     "ReportsTable",
@@ -136,13 +143,19 @@ def check() -> list[str]:
     if "CognitoAuthorizer" not in (api_auth.get("Authorizers") or {}):
         problems.append("HttpApi is missing the CognitoAuthorizer")
 
-    review_events = (
-        resources.get("ReviewReportFunction", {}).get("Properties", {}).get("Events", {})
-    )
-    review_route = review_events.get("ReviewDecision", {}).get("Properties", {})
-    authorizer = (review_route.get("Auth") or {}).get("Authorizer")
-    if authorizer != "CognitoAuthorizer":
-        problems.append("The admin decision route is missing the JWT authorizer")
+    for function_id, function in resources.items():
+        if function.get("Type") != "AWS::Serverless::Function":
+            continue
+        for event_name, event in (function.get("Properties", {}).get("Events") or {}).items():
+            properties = (event or {}).get("Properties") or {}
+            path = properties.get("Path") or ""
+            if not isinstance(path, str) or not path.startswith("/admin/"):
+                continue
+            authorizer = (properties.get("Auth") or {}).get("Authorizer")
+            if authorizer != "CognitoAuthorizer":
+                problems.append(
+                    f"Admin route {path} on {function_id}.{event_name} is missing the JWT authorizer"
+                )
 
     state_machine = resources.get("ReportWorkflowStateMachine", {}).get("Properties", {})
     definition_uri = state_machine.get("DefinitionUri")

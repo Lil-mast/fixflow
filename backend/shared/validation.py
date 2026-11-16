@@ -20,6 +20,7 @@ from shared.errors import (
     ValidationError,
 )
 from shared.ids import is_uuid4
+from shared.transitions import STATUSES
 
 CATEGORIES = (
     "POTHOLE",
@@ -41,6 +42,11 @@ CONTENT_TYPE_EXTENSIONS = {
 CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 EVIDENCE_KEY_RE = re.compile(
     r"^incoming/(?P<report_id>[0-9a-f-]{36})/"
+    r"(?P<upload_id>[0-9a-f-]{36})\.(?P<extension>jpg|jpeg|png|webp)$",
+    re.IGNORECASE,
+)
+RESOLUTION_KEY_RE = re.compile(
+    r"^incoming/resolution/(?P<report_id>[0-9a-f-]{36})/"
     r"(?P<upload_id>[0-9a-f-]{36})\.(?P<extension>jpg|jpeg|png|webp)$",
     re.IGNORECASE,
 )
@@ -79,6 +85,39 @@ class DecisionRequest:
     comment: str | None
     public_message: str | None
     expected_version: int
+
+
+@dataclass(frozen=True)
+class AssignRequest:
+    assigned_team: str
+    comment: str | None
+    public_message: str | None
+    expected_version: int
+
+
+@dataclass(frozen=True)
+class ResolutionRequest:
+    evidence: EvidenceInput
+    note: str
+    public_message: str | None
+    expected_version: int
+
+
+@dataclass(frozen=True)
+class VerificationRequest:
+    decision: str
+    comment: str | None
+    public_message: str | None
+    expected_version: int
+
+
+@dataclass(frozen=True)
+class AdminListQuery:
+    status: str | None
+    category: str | None
+    limit: int
+    cursor: str | None
+    include_demo: bool
 
 
 def _require_mapping(value: Any, field: str) -> dict[str, Any]:
@@ -174,6 +213,25 @@ def validate_upload_request(payload: Any) -> UploadRequest:
     )
 
 
+def validate_resolution_upload_request(payload: Any, report_id: str) -> UploadRequest:
+    if not is_uuid4(report_id):
+        raise ValidationError("reportId must be a UUIDv4.", {"field": "reportId"})
+
+    body = _require_mapping(payload, "body")
+    _reject_unknown(body, {"contentType", "contentLength"}, "body")
+
+    content_type = _content_type(_required(body, "contentType"), "contentType")
+    content_length = _positive_int(_required(body, "contentLength"), "contentLength")
+    if content_length > MAX_UPLOAD_BYTES:
+        raise PayloadTooLarge("Evidence must be 10 MiB or smaller.")
+
+    return UploadRequest(
+        report_id=report_id.lower(),
+        content_type=content_type,
+        content_length=content_length,
+    )
+
+
 def _validate_location(value: Any) -> tuple[str, float | None, float | None]:
     location = _require_mapping(value, "location")
     _reject_unknown(location, {"area", "latitude", "longitude"}, "location")
@@ -206,7 +264,7 @@ def _validate_location(value: Any) -> tuple[str, float | None, float | None]:
     return area, latitude, longitude
 
 
-def _validate_evidence(value: Any, report_id: str) -> EvidenceInput:
+def _validate_evidence(value: Any, report_id: str, *, purpose: str = "report") -> EvidenceInput:
     evidence = _require_mapping(value, "evidence")
     _reject_unknown(
         evidence,
@@ -220,10 +278,16 @@ def _validate_evidence(value: Any, report_id: str) -> EvidenceInput:
             "evidence.objectKey must be a string.", {"field": "evidence.objectKey"}
         )
 
-    match = EVIDENCE_KEY_RE.fullmatch(object_key)
+    pattern = RESOLUTION_KEY_RE if purpose == "resolution" else EVIDENCE_KEY_RE
+    expected_shape = (
+        "incoming/resolution/<reportId>/<uploadId>.<ext>"
+        if purpose == "resolution"
+        else "incoming/<reportId>/<uploadId>.<ext>"
+    )
+    match = pattern.fullmatch(object_key)
     if match is None:
         raise ValidationError(
-            "evidence.objectKey must match incoming/<reportId>/<uploadId>.<ext>.",
+            f"evidence.objectKey must match {expected_shape}.",
             {"field": "evidence.objectKey"},
         )
 
@@ -336,6 +400,131 @@ def validate_decision_request(payload: Any) -> DecisionRequest:
         public_message=public_message,
         expected_version=expected_version,
     )
+
+
+def _optional_comment(body: dict[str, Any]) -> str | None:
+    if body.get("comment") is None:
+        return None
+    return _string(body["comment"], "comment", minimum=1, maximum=2000)
+
+
+def _optional_public_message(body: dict[str, Any]) -> str | None:
+    if body.get("publicMessage") is None:
+        return None
+    return _string(body["publicMessage"], "publicMessage", minimum=1, maximum=280)
+
+
+def validate_assign_request(payload: Any) -> AssignRequest:
+    body = _require_mapping(payload, "body")
+    _reject_unknown(
+        body,
+        {"assignedTeam", "comment", "publicMessage", "expectedVersion"},
+        "body",
+    )
+
+    assigned_team = _string(_required(body, "assignedTeam"), "assignedTeam", minimum=2, maximum=80)
+
+    return AssignRequest(
+        assigned_team=assigned_team,
+        comment=_optional_comment(body),
+        public_message=_optional_public_message(body),
+        expected_version=_positive_int(_required(body, "expectedVersion"), "expectedVersion"),
+    )
+
+
+def validate_resolution_request(payload: Any, report_id: str) -> ResolutionRequest:
+    body = _require_mapping(payload, "body")
+    _reject_unknown(
+        body,
+        {"evidence", "note", "publicMessage", "expectedVersion"},
+        "body",
+    )
+
+    evidence = _validate_evidence(_required(body, "evidence"), report_id, purpose="resolution")
+    note = _string(_required(body, "note"), "note", minimum=1, maximum=2000)
+
+    return ResolutionRequest(
+        evidence=evidence,
+        note=note,
+        public_message=_optional_public_message(body),
+        expected_version=_positive_int(_required(body, "expectedVersion"), "expectedVersion"),
+    )
+
+
+VERIFICATION_DECISIONS = ("VERIFIED", "REJECTED")
+
+
+def validate_verification_request(payload: Any) -> VerificationRequest:
+    body = _require_mapping(payload, "body")
+    _reject_unknown(
+        body,
+        {"decision", "comment", "publicMessage", "expectedVersion"},
+        "body",
+    )
+
+    decision = _enum(_required(body, "decision"), "decision", VERIFICATION_DECISIONS)
+    comment = _optional_comment(body)
+    if decision == "REJECTED" and comment is None:
+        raise ValidationError("comment is required for REJECTED.", {"field": "comment"})
+
+    return VerificationRequest(
+        decision=decision,
+        comment=comment,
+        public_message=_optional_public_message(body),
+        expected_version=_positive_int(_required(body, "expectedVersion"), "expectedVersion"),
+    )
+
+
+def _boolean(value: Any, field: str) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+    raise ValidationError(f"{field} must be true or false.", {"field": field})
+
+
+def validate_admin_list_query(query: Any) -> AdminListQuery:
+    parameters = query if isinstance(query, dict) else {}
+
+    status = parameters.get("status")
+    if status is not None and status not in STATUSES:
+        raise ValidationError("status must be a lifecycle status.", {"field": "status"})
+
+    category = parameters.get("category")
+    if category is not None and category not in CATEGORIES:
+        raise ValidationError("category must be a report category.", {"field": "category"})
+
+    limit = 25
+    raw_limit = parameters.get("limit")
+    if raw_limit is not None:
+        if not isinstance(raw_limit, str) or not raw_limit.isdigit():
+            raise ValidationError("limit must be an integer between 1 and 100.", {"field": "limit"})
+        limit = int(raw_limit)
+        if not 1 <= limit <= 100:
+            raise ValidationError("limit must be between 1 and 100.", {"field": "limit"})
+
+    cursor = parameters.get("cursor")
+    if cursor is not None and not isinstance(cursor, str):
+        raise ValidationError("cursor must be a string.", {"field": "cursor"})
+
+    return AdminListQuery(
+        status=status,
+        category=category,
+        limit=limit,
+        cursor=cursor or None,
+        include_demo=_boolean(parameters.get("includeDemo"), "includeDemo"),
+    )
+
+
+def validate_metrics_query(query: Any) -> bool:
+    parameters = query if isinstance(query, dict) else {}
+    return _boolean(parameters.get("includeDemo"), "includeDemo")
 
 
 def _stored_number(value: Any) -> float | None:

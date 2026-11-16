@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >-
-  FixFlow - serverless civic issue reporting. Phase 3 adds the Step Functions report
-  workflow, the Cognito-protected admin review endpoint, and transactional review
-  callbacks.
+  FixFlow - serverless civic issue reporting. Phase 4 completes the report lifecycle:
+  assignment, resolution evidence, administrator verification, admin read APIs, and
+  operational metrics.
 
 Parameters:
   Stage:
@@ -35,6 +35,15 @@ Parameters:
       How long the review task waits before expiring and issuing a fresh token. The
       default is 72 hours.
 
+  LifecycleTimeoutSeconds:
+    Type: Number
+    Default: 1209600
+    MinValue: 3600
+    MaxValue: 2592000
+    Description: >-
+      How long assignment, resolution, and verification tasks wait before issuing a
+      fresh token. The default is 14 days.
+
   CognitoDomainPrefix:
     Type: String
     Default: ""
@@ -64,6 +73,8 @@ Globals:
         EVIDENCE_BUCKET: !Ref EvidenceBucket
         WEB_BUCKET: !Ref WebBucket
         REVIEW_TIMEOUT_SECONDS: !Ref ReviewTimeoutSeconds
+        LIFECYCLE_TIMEOUT_SECONDS: !Ref LifecycleTimeoutSeconds
+        EVIDENCE_URL_EXPIRY_SECONDS: 300
         STATE_MACHINE_ARN: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:fixflow-report-workflow-${Stage}"
 
 Resources:
@@ -339,6 +350,231 @@ Resources:
             Auth:
               Authorizer: CognitoAuthorizer
 
+  AssignReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.assign_report.app.handler
+      Description: Assign an approved report and resume the assignment callback.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:TransactWriteItems
+              Resource:
+                - !GetAtt ReportsTable.Arn
+                - !GetAtt ReportEventsTable.Arn
+                - !GetAtt WorkflowTokensTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt ReportEventsTable.Arn
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+              Resource: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:*"
+      Events:
+        AssignReport:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /admin/reports/{reportId}/assign
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  CreateResolutionUploadUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.create_resolution_upload_url.app.handler
+      Description: Create a presigned POST for completion evidence.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt ReportsTable.Arn
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "${EvidenceBucket.Arn}/incoming/resolution/*"
+      Events:
+        CreateResolutionUploadUrl:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /admin/reports/{reportId}/resolution/upload-url
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  SubmitResolutionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.submit_resolution.app.handler
+      Description: Verify completion evidence and move the report to RESOLUTION_PENDING.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:TransactWriteItems
+              Resource:
+                - !GetAtt ReportsTable.Arn
+                - !GetAtt ReportEventsTable.Arn
+                - !GetAtt WorkflowTokensTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt ReportEventsTable.Arn
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "${EvidenceBucket.Arn}/incoming/resolution/*"
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "${EvidenceBucket.Arn}/resolution/*"
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+              Resource: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:*"
+      Events:
+        SubmitResolution:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /admin/reports/{reportId}/resolution
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  VerifyResolutionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.verify_resolution.app.handler
+      Description: Verify or reject a resolution and resume the verification callback.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:TransactWriteItems
+              Resource:
+                - !GetAtt ReportsTable.Arn
+                - !GetAtt ReportEventsTable.Arn
+                - !GetAtt WorkflowTokensTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt ReportEventsTable.Arn
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+              Resource: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:*"
+      Events:
+        VerifyResolution:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /admin/reports/{reportId}/verify
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  AdminListReportsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.admin_list_reports.app.handler
+      Description: List reports for the administrator dashboard.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource:
+                - !Sub "${ReportsTable.Arn}/index/GSI1"
+                - !Sub "${ReportsTable.Arn}/index/GSI3"
+            - Effect: Allow
+              Action:
+                - dynamodb:BatchGetItem
+              Resource: !GetAtt ReportsTable.Arn
+      Events:
+        AdminListReports:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /admin/reports
+            Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  AdminGetReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.admin_get_report.app.handler
+      Description: Return the full report, audit history, and short-lived evidence URLs.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt ReportsTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: !GetAtt ReportEventsTable.Arn
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource:
+                - !Sub "${EvidenceBucket.Arn}/evidence/*"
+                - !Sub "${EvidenceBucket.Arn}/resolution/*"
+      Events:
+        AdminGetReport:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /admin/reports/{reportId}
+            Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  AdminMetricsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.admin_metrics.app.handler
+      Description: Compute operational counts and averages from application records.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: !Sub "${ReportsTable.Arn}/index/GSI3"
+            - Effect: Allow
+              Action:
+                - dynamodb:BatchGetItem
+              Resource: !GetAtt ReportsTable.Arn
+      Events:
+        AdminMetrics:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /admin/metrics
+            Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
+
   WorkflowLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -358,6 +594,7 @@ Resources:
         StoreTaskTokenFunctionArn: !GetAtt StoreTaskTokenFunction.Arn
         RecordWorkflowFailureFunctionArn: !GetAtt RecordWorkflowFailureFunction.Arn
         ReviewTimeoutSeconds: !Ref ReviewTimeoutSeconds
+        LifecycleTimeoutSeconds: !Ref LifecycleTimeoutSeconds
       Logging:
         Destinations:
           - CloudWatchLogsLogGroup:

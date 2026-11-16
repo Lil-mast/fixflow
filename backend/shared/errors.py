@@ -62,6 +62,14 @@ class ReviewExpired(AppError):
         super().__init__("REVIEW_EXPIRED", message, 409)
 
 
+class TaskExpired(AppError):
+    def __init__(
+        self,
+        message: str = "The workflow task has expired. Refetch the report and retry.",
+    ) -> None:
+        super().__init__("TASK_EXPIRED", message, 409)
+
+
 class RateLimited(AppError):
     def __init__(self, message: str = "Too many requests. Try again shortly.") -> None:
         super().__init__("RATE_LIMITED", message, 429)

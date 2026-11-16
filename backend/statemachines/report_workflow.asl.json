@@ -1,5 +1,5 @@
 {
-  "Comment": "FixFlow report workflow: submission through administrator review. Phase 3 ends after APPROVED, REJECTED, or NEEDS_INFO.",
+  "Comment": "FixFlow report workflow: submission through verified resolution. Review waits 72 hours; assignment, resolution, and verification waits use the configurable lifecycle timeout and issue a fresh token on timeout.",
   "StartAt": "ResumeChoice",
   "States": {
     "ResumeChoice": {
@@ -243,7 +243,227 @@
           "Next": "RecordWorkflowFailure"
         }
       ],
+      "Next": "StoreAssignmentToken"
+    },
+    "StoreAssignmentToken": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${StoreTaskTokenFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "taskType": "ASSIGNMENT",
+          "taskToken.$": "$$.Task.Token",
+          "executionArn.$": "$$.Execution.Id",
+          "timeoutSeconds": ${LifecycleTimeoutSeconds}
+        }
+      },
+      "TimeoutSeconds": ${LifecycleTimeoutSeconds},
+      "ResultSelector": {
+        "assignedTeam.$": "$.assignedTeam"
+      },
+      "ResultPath": "$.assignment",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "ResultPath": "$.timeout",
+          "Next": "StoreAssignmentToken"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "Next": "MarkInProgress"
+    },
+    "MarkInProgress": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${TransitionReportFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "targetStatus": "IN_PROGRESS",
+          "expectedStatuses": ["APPROVED", "IN_PROGRESS"],
+          "action": "TEAM_ASSIGNED",
+          "visibility": "ADMIN",
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultSelector": {
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.transition",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "Next": "StoreResolutionToken"
+    },
+    "StoreResolutionToken": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${StoreTaskTokenFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "taskType": "RESOLUTION",
+          "taskToken.$": "$$.Task.Token",
+          "executionArn.$": "$$.Execution.Id",
+          "timeoutSeconds": ${LifecycleTimeoutSeconds}
+        }
+      },
+      "TimeoutSeconds": ${LifecycleTimeoutSeconds},
+      "ResultSelector": {
+        "submitted.$": "$.submitted"
+      },
+      "ResultPath": "$.resolution",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "ResultPath": "$.timeout",
+          "Next": "StoreResolutionToken"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "Next": "MarkResolutionPending"
+    },
+    "MarkResolutionPending": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${TransitionReportFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "targetStatus": "RESOLUTION_PENDING",
+          "expectedStatuses": ["IN_PROGRESS", "RESOLUTION_PENDING"],
+          "action": "RESOLUTION_SUBMITTED",
+          "visibility": "ADMIN",
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultSelector": {
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.transition",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "Next": "StoreVerificationToken"
+    },
+    "StoreVerificationToken": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${StoreTaskTokenFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "taskType": "VERIFICATION",
+          "taskToken.$": "$$.Task.Token",
+          "executionArn.$": "$$.Execution.Id",
+          "timeoutSeconds": ${LifecycleTimeoutSeconds}
+        }
+      },
+      "TimeoutSeconds": ${LifecycleTimeoutSeconds},
+      "ResultSelector": {
+        "decision.$": "$.decision"
+      },
+      "ResultPath": "$.verification",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "ResultPath": "$.timeout",
+          "Next": "StoreVerificationToken"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "Next": "VerificationDecision"
+    },
+    "VerificationDecision": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.verification.decision",
+          "StringEquals": "VERIFIED",
+          "Next": "MarkResolved"
+        },
+        {
+          "Variable": "$.verification.decision",
+          "StringEquals": "REJECTED",
+          "Next": "MarkInProgressAfterRejection"
+        }
+      ],
+      "Default": "RecordWorkflowFailure"
+    },
+    "MarkResolved": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${TransitionReportFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "targetStatus": "RESOLVED",
+          "expectedStatuses": ["RESOLUTION_PENDING", "RESOLVED"],
+          "action": "RESOLUTION_VERIFIED",
+          "visibility": "ADMIN",
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultSelector": {
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.transition",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
       "End": true
+    },
+    "MarkInProgressAfterRejection": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${TransitionReportFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "targetStatus": "IN_PROGRESS",
+          "expectedStatuses": ["RESOLUTION_PENDING", "IN_PROGRESS"],
+          "action": "RESOLUTION_REJECTED",
+          "visibility": "ADMIN",
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultSelector": {
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.transition",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "Next": "StoreResolutionToken"
     },
     "MarkRejected": {
       "Type": "Task",

@@ -1,0 +1,1 @@
+"""verify_resolution endpoint."""

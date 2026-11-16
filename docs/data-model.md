@@ -504,20 +504,22 @@ change to weights or bands is a product decision, not an implementation detail.
 
 | Metric | Source | Definition |
 | --- | --- | --- |
-| Total reports | `GSI3` count | All reports with `dataSource = LIVE` unless `includeDemo=true`. |
-| Awaiting review | `GSI1` count | `REVIEW_PENDING` + `REVIEW_EXPIRED`. |
-| Assigned | `GSI1` count | `IN_PROGRESS`. |
-| Resolved | `GSI1` count | `RESOLVED`. |
+| Total reports | `GSI3` page | All reports with `dataSource = LIVE` unless `includeDemo=true`. |
+| Awaiting review | `GSI3` page | `REVIEW_PENDING` + `REVIEW_EXPIRED`. |
+| Assigned | `GSI3` page | `IN_PROGRESS`. |
+| Resolved | `GSI3` page | `RESOLVED`. |
 | Average submission to review | Report fields | `avg(reviewedAt - createdAt)` for reports with `reviewedAt`. |
 | Average approval to resolution | Report fields | `avg(resolvedAt - approvedAt)` for reports with both. |
 
-The MVP computes averages by paging `GSI3`. At demo volume this is fine. If the data grows,
-move the aggregates to a small metrics table updated from DynamoDB Streams, or precompute
-them on a schedule. Do not add that complexity this weekend.
+The MVP computes every metric by paging `GSI3` once and reducing the records in memory.
+At demo volume this is fine. If the data grows, move the aggregates to a small metrics table
+updated from DynamoDB Streams, or precompute them on a schedule. Do not add that complexity
+this weekend.
 
-Status counts use `FilterExpression dataSource = LIVE` unless demo mode is on. DynamoDB
-still reads the filtered items for a `COUNT`, which is acceptable at demo volume. A
-production design would separate demo and live data into different partitions or tables.
+The demo filter is applied in the application, not with a `FilterExpression`, because the
+same page feeds all counts and averages. DynamoDB still reads the pages before the filter,
+which is acceptable at demo volume. A production design would separate demo and live data
+into different partitions or tables.
 
 ## 10. Demo data
 
