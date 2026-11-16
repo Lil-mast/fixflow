@@ -18,6 +18,10 @@ TEMPLATE = Path(__file__).resolve().parents[1] / "infrastructure" / "template.ya
 REQUIRED_RESOURCES = {
     "HttpApi",
     "HealthFunction",
+    "CreateUploadUrlFunction",
+    "SubmitReportFunction",
+    "GetPublicReportFunction",
+    "GetPublicEventsFunction",
     "ReportsTable",
     "ReportEventsTable",
     "WorkflowTokensTable",
@@ -112,9 +116,10 @@ def check() -> list[str]:
     if wildcards:
         problems.append(f"Wildcard principals found at: {', '.join(wildcards)}")
 
-    allowed_origin = (
-        template.get("Parameters", {}).get("AllowedOrigin", {}).get("Default", "")
-    )
+    if "dynamodb:Scan" in TEMPLATE.read_text(encoding="utf-8"):
+        problems.append("Template grants dynamodb:Scan; the app must use queries")
+
+    allowed_origin = template.get("Parameters", {}).get("AllowedOrigin", {}).get("Default", "")
     if allowed_origin.strip() == "*":
         problems.append("AllowedOrigin must not default to a wildcard")
 

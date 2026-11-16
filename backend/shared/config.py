@@ -10,6 +10,9 @@ import os
 from dataclasses import dataclass
 
 DEFAULT_ALLOWED_ORIGINS = "http://localhost:5173"
+DEFAULT_WEB_URL = "http://localhost:5173"
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+UPLOAD_EXPIRY_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -22,6 +25,8 @@ class Settings:
     evidence_bucket: str
     web_bucket: str
     allowed_origins: tuple[str, ...]
+    web_url: str = DEFAULT_WEB_URL
+    upload_expiry_seconds: int = UPLOAD_EXPIRY_SECONDS
     review_timeout_hours: int = 72
 
 
@@ -58,8 +63,8 @@ def load_settings() -> Settings:
         tokens_table=os.environ.get("TOKENS_TABLE", "FixFlowWorkflowTokens"),
         evidence_bucket=os.environ.get("EVIDENCE_BUCKET", ""),
         web_bucket=os.environ.get("WEB_BUCKET", ""),
-        allowed_origins=parse_origins(
-            os.environ.get("ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS)
-        ),
+        allowed_origins=parse_origins(os.environ.get("ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS)),
+        web_url=os.environ.get("WEB_URL", DEFAULT_WEB_URL).rstrip("/"),
+        upload_expiry_seconds=int(os.environ.get("UPLOAD_EXPIRY_SECONDS", UPLOAD_EXPIRY_SECONDS)),
         review_timeout_hours=int(os.environ.get("REVIEW_TIMEOUT_HOURS", "72")),
     )

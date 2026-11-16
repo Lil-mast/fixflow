@@ -7,20 +7,12 @@ like a broken deployment.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from shared.config import load_settings
+from shared.http import request_id
 from shared.responses import json_response
-
-
-def _request_id(event: dict[str, Any], context: Any) -> str:
-    request_context = (event or {}).get("requestContext") or {}
-    return (
-        getattr(context, "aws_request_id", None)
-        or request_context.get("requestId")
-        or "local"
-    )
 
 
 def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
@@ -28,12 +20,12 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
     body = {
         "status": "ok",
         "service": "fixflow",
-        "time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "time": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     return json_response(
         200,
         body,
         event=event,
         allowed_origins=settings.allowed_origins,
-        extra_headers={"x-request-id": _request_id(event, context)},
+        extra_headers={"x-request-id": request_id(event, context)},
     )

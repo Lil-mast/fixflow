@@ -421,11 +421,13 @@ One SAM stack, `fixflow`, contains:
 
 Deployment order:
 
-1. `sam build`
-2. `sam deploy --guided --stack-name fixflow`
-3. Build the frontend with the API and Cognito outputs.
-4. `aws s3 sync frontend/dist s3://<FixFlowWebBucket> --delete`
-5. Create a CloudFront invalidation for `/*`.
+1. `make build`
+2. `make deploy STACK_NAME=fixflow REGION=<region> STAGE=dev`
+3. Read the `WebUrl` output and redeploy with `ALLOWED_ORIGIN` and `WEB_URL` set to
+   that CloudFront URL.
+4. Build the frontend with the API and Cognito outputs.
+5. `aws s3 sync frontend/dist s3://<FixFlowWebBucket> --delete`
+6. Create a CloudFront invalidation for `/*`.
 
 There is no CI/CD pipeline. The challenge explicitly favors no pipeline to manage, and a
 local deploy keeps the feedback loop short. Do not add GitHub Actions for this submission.

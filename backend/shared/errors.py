@@ -25,6 +25,11 @@ class BadRequest(AppError):
         super().__init__("BAD_REQUEST", message, 400, details)
 
 
+class ValidationError(AppError):
+    def __init__(self, message: str, details: dict | None = None) -> None:
+        super().__init__("VALIDATION_ERROR", message, 400, details)
+
+
 class Unauthorized(AppError):
     def __init__(self, message: str = "Authentication is required.") -> None:
         super().__init__("UNAUTHORIZED", message, 401)
@@ -48,6 +53,26 @@ class Conflict(AppError):
 class RateLimited(AppError):
     def __init__(self, message: str = "Too many requests. Try again shortly.") -> None:
         super().__init__("RATE_LIMITED", message, 429)
+
+
+class PayloadTooLarge(AppError):
+    def __init__(self, message: str = "The request payload is too large.") -> None:
+        super().__init__("PAYLOAD_TOO_LARGE", message, 413)
+
+
+class UnsupportedMediaType(AppError):
+    def __init__(self, message: str) -> None:
+        super().__init__("UNSUPPORTED_MEDIA_TYPE", message, 415)
+
+
+class UnprocessableEntity(AppError):
+    def __init__(self, message: str, details: dict | None = None) -> None:
+        super().__init__("UNPROCESSABLE_ENTITY", message, 422, details)
+
+
+class ServiceUnavailable(AppError):
+    def __init__(self, message: str = "The service is temporarily unavailable.") -> None:
+        super().__init__("SERVICE_UNAVAILABLE", message, 503)
 
 
 class InternalError(AppError):

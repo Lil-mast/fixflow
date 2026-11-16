@@ -2,11 +2,12 @@
 
 > From community reports to accountable action.
 
-**Build status: Phase 1, deployable foundation.** The repository contains the design
-documentation, a SAM template, three DynamoDB tables, two private S3 buckets, CloudFront
-with Origin Access Control, a Cognito admin user pool, and a tested `GET /health` Lambda.
-Report submission, the Step Functions workflow, the admin APIs, and the frontend are not
-implemented yet. Anything described as deployed or measured is a target, not a claim.
+**Build status: Phase 2, report submission slice.** The repository contains the design
+documentation, a deployable SAM stack, the DynamoDB tables and private storage, the Cognito
+admin pool, a tested `GET /health` endpoint, presigned evidence uploads, transactional
+report submission, and public tracking with a filtered projection. The Step Functions
+workflow, admin APIs, and frontend are not implemented yet. Anything described as deployed
+or measured is a target, not a claim.
 
 FixFlow is a serverless civic infrastructure reporting and resolution platform. Residents
 report problems such as potholes, broken streetlights, leaking public water pipes, damaged
@@ -226,15 +227,16 @@ make sam-validate
 # Build and deploy the backend
 make build
 make deploy STACK_NAME=fixflow REGION=us-east-1 STAGE=dev \
-  ALLOWED_ORIGIN=http://localhost:5173
+  ALLOWED_ORIGIN=http://localhost:5173 WEB_URL=http://localhost:5173
 ```
 
 `make help` lists every target and its variables.
 
-The first deployment uses `ALLOWED_ORIGIN=http://localhost:5173` because the CloudFront
-domain does not exist yet. Read the `WebUrl` stack output, then redeploy with
-`ALLOWED_ORIGIN=https://<distribution-domain>` so the API CORS, evidence bucket CORS, and
-Cognito callback URLs all point at the deployed frontend.
+The first deployment uses `ALLOWED_ORIGIN=http://localhost:5173` and
+`WEB_URL=http://localhost:5173` because the CloudFront domain does not exist yet. Read the
+`WebUrl` stack output, then redeploy with both values set to
+`https://<distribution-domain>` so the API CORS, evidence bucket CORS, Cognito callback
+URLs, and tracking links all point at the deployed frontend.
 
 The frontend is not implemented yet. When it exists, it will run with:
 

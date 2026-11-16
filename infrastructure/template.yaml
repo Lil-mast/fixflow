@@ -19,6 +19,13 @@ Parameters:
       Exact browser origin allowed to call the API and upload evidence. In production,
       set this to the CloudFront URL after the first deployment (no trailing slash).
 
+  WebUrl:
+    Type: String
+    Default: http://localhost:5173
+    Description: >-
+      Public frontend base URL used to build tracking links. Set this to the CloudFront
+      URL after the first deployment.
+
   ReviewTimeoutHours:
     Type: Number
     Default: 72
@@ -48,6 +55,7 @@ Globals:
       Variables:
         STAGE: !Ref Stage
         ALLOWED_ORIGINS: !Ref AllowedOrigin
+        WEB_URL: !Ref WebUrl
         REPORTS_TABLE: !Ref ReportsTable
         EVENTS_TABLE: !Ref EventsTable
         TOKENS_TABLE: !Ref TokensTable
@@ -87,6 +95,108 @@ Resources:
           Properties:
             ApiId: !Ref HttpApi
             Path: /health
+            Method: GET
+
+  CreateUploadUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.create_upload_url.app.handler
+      Description: Create a five-minute presigned POST for report evidence.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "${EvidenceBucket.Arn}/incoming/*"
+      Events:
+        CreateUploadUrl:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /reports/upload-url
+            Method: POST
+
+  SubmitReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.submit_report.app.handler
+      Description: Validate a report, verify evidence, and create the report atomically.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:TransactWriteItems
+              Resource:
+                - !GetAtt ReportsTable.Arn
+                - !GetAtt ReportEventsTable.Arn
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "${EvidenceBucket.Arn}/incoming/*"
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "${EvidenceBucket.Arn}/evidence/*"
+      Events:
+        SubmitReport:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /reports
+            Method: POST
+
+  GetPublicReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.get_public_report.app.handler
+      Description: Resolve a public reference and return the filtered projection.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt ReportsTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: !Sub "${ReportsTable.Arn}/index/GSI2"
+      Events:
+        GetPublicReport:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /public/reports/{publicRef}
+            Method: GET
+
+  GetPublicEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.get_public_events.app.handler
+      Description: Return only the public events for a tracked report.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt ReportsTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource:
+                - !Sub "${ReportsTable.Arn}/index/GSI2"
+                - !GetAtt ReportEventsTable.Arn
+      Events:
+        GetPublicEvents:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /public/reports/{publicRef}/events
             Method: GET
 
   ReportsTable:
