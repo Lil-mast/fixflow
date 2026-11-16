@@ -14,6 +14,7 @@ from tests.support import (
     EVIDENCE_BUCKET,
     REPORTS_TABLE,
     FakeContext,
+    FakeWorkflow,
     api_event,
     make_settings,
     sample_report_payload,
@@ -226,3 +227,53 @@ def test_missing_body_is_validation_error(dynamodb) -> None:
     )
     assert response["statusCode"] == 400
     assert json.loads(response["body"])["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_submission_starts_the_workflow_when_configured(dynamodb) -> None:
+    _, repository, _ = _dependencies()
+    settings = make_settings(
+        state_machine_arn="arn:aws:states:us-east-1:123456789012:stateMachine:fixflow"
+    )
+    workflow = FakeWorkflow()
+    payload = sample_report_payload()
+
+    response = submit_report(
+        api_event(payload),
+        FakeContext(),
+        settings=settings,
+        repository=repository,
+        workflow=workflow,
+    )
+
+    assert response["statusCode"] == 201
+    assert len(workflow.started) == 1
+    report_id, public_ref = workflow.started[0]
+    assert report_id == payload["reportId"].lower()
+    assert public_ref.startswith("FF-")
+
+    stored = repository.get_report(report_id)
+    assert stored is not None
+    assert stored["workflowStatus"] == "STARTED"
+    assert stored["workflowExecutionArn"].endswith(report_id)
+
+
+def test_workflow_start_failure_leaves_report_pending(dynamodb) -> None:
+    _, repository, _ = _dependencies()
+    settings = make_settings(
+        state_machine_arn="arn:aws:states:us-east-1:123456789012:stateMachine:fixflow"
+    )
+    workflow = FakeWorkflow(fail_start=True)
+    payload = sample_report_payload()
+
+    response = submit_report(
+        api_event(payload),
+        FakeContext(),
+        settings=settings,
+        repository=repository,
+        workflow=workflow,
+    )
+
+    assert response["statusCode"] == 201
+    stored = repository.get_report(payload["reportId"].lower())
+    assert stored is not None
+    assert stored["workflowStatus"] == "PENDING"

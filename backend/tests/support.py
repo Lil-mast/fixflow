@@ -7,10 +7,13 @@ from dataclasses import replace
 from typing import Any
 
 from shared.config import Settings
-from shared.ids import new_uuid4
+from shared.domain import build_new_report
+from shared.ids import new_public_ref, new_uuid4
+from shared.validation import validate_report_input
 
 REPORTS_TABLE = "FixFlowReports"
 EVENTS_TABLE = "FixFlowReportEvents"
+TOKENS_TABLE = "FixFlowWorkflowTokens"
 EVIDENCE_BUCKET = "fixflow-evidence-test"
 
 
@@ -20,7 +23,7 @@ def make_settings(**overrides: Any) -> Settings:
         region="us-east-1",
         reports_table=REPORTS_TABLE,
         events_table=EVENTS_TABLE,
-        tokens_table="FixFlowWorkflowTokens",
+        tokens_table=TOKENS_TABLE,
         evidence_bucket=EVIDENCE_BUCKET,
         web_bucket="fixflow-web-test",
         allowed_origins=("http://localhost:5173",),
@@ -82,6 +85,18 @@ def create_tables(client: Any) -> None:
             {"AttributeName": "eventId", "KeyType": "RANGE"},
         ],
     )
+    client.create_table(
+        TableName=TOKENS_TABLE,
+        BillingMode="PAY_PER_REQUEST",
+        AttributeDefinitions=[
+            {"AttributeName": "reportId", "AttributeType": "S"},
+            {"AttributeName": "taskType", "AttributeType": "S"},
+        ],
+        KeySchema=[
+            {"AttributeName": "reportId", "KeyType": "HASH"},
+            {"AttributeName": "taskType", "KeyType": "RANGE"},
+        ],
+    )
 
 
 def sample_report_payload(
@@ -125,6 +140,26 @@ def api_event(
     }
 
 
+def admin_api_event(
+    body: dict[str, Any] | None = None,
+    *,
+    path_parameters: dict[str, str] | None = None,
+    groups: list[str] | str | tuple[str, ...] = ("admin",),
+    subject: str = "admin-sub-1",
+    origin: str | None = "http://localhost:5173",
+) -> dict[str, Any]:
+    event = api_event(body, path_parameters=path_parameters, origin=origin)
+    event["requestContext"]["authorizer"] = {
+        "jwt": {
+            "claims": {
+                "sub": subject,
+                "cognito:groups": list(groups) if not isinstance(groups, str) else groups,
+            }
+        }
+    }
+    return event
+
+
 class FakeContext:
     aws_request_id = "test-request-id"
 
@@ -141,3 +176,42 @@ class RecordingS3:
             "url": "https://example.test/upload",
             "fields": dict(kwargs["Fields"]),
         }
+
+
+class FakeWorkflow:
+    """Records workflow calls without contacting Step Functions."""
+
+    def __init__(self, *, configured: bool = True, fail_start: bool = False) -> None:
+        self._configured = configured
+        self.fail_start = fail_start
+        self.started: list[tuple[str, str]] = []
+        self.successes: list[tuple[str, dict[str, Any]]] = []
+
+    @property
+    def configured(self) -> bool:
+        return self._configured
+
+    def start(self, report_id: str, public_ref: str) -> str:
+        if self.fail_start:
+            raise RuntimeError("start failed")
+        self.started.append((report_id, public_ref))
+        return f"arn:aws:states:us-east-1:123456789012:execution:fixflow:{report_id}"
+
+    def send_success(self, task_token: str, output: dict[str, Any]) -> None:
+        self.successes.append((task_token, output))
+
+
+def seed_report(
+    repository: Any,
+    *,
+    status: str = "SUBMITTED",
+    version: int = 1,
+    report_id: str | None = None,
+) -> dict[str, Any]:
+    value = validate_report_input(sample_report_payload(report_id))
+    built = build_new_report(value, public_ref=new_public_ref(), evidence_key=None)
+    built.report["status"] = status
+    built.report["version"] = version
+    built.report["GSI1PK"] = f"STATUS#{status}"
+    repository.create_report(built.report, built.event)
+    return built.report

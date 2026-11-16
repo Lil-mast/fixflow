@@ -2,12 +2,14 @@
 
 > From community reports to accountable action.
 
-**Build status: Phase 2, report submission slice.** The repository contains the design
+**Build status: Phase 3, workflow and review slice.** The repository contains the design
 documentation, a deployable SAM stack, the DynamoDB tables and private storage, the Cognito
 admin pool, a tested `GET /health` endpoint, presigned evidence uploads, transactional
-report submission, and public tracking with a filtered projection. The Step Functions
-workflow, admin APIs, and frontend are not implemented yet. Anything described as deployed
-or measured is a target, not a claim.
+report submission, public tracking with a filtered projection, and a Step Functions workflow
+that validates, scores, and waits for an administrator review. The review endpoint requires
+a Cognito JWT with the `admin` group, consumes the task token transactionally, and resumes
+the workflow. Assignment, resolution, verification, and the frontend are not implemented
+yet. Anything described as deployed or measured is a target, not a claim.
 
 FixFlow is a serverless civic infrastructure reporting and resolution platform. Residents
 report problems such as potholes, broken streetlights, leaking public water pipes, damaged
@@ -261,7 +263,9 @@ Backend values are injected by SAM. Frontend values are build-time Vite variable
 | `TOKENS_TABLE` | Lambda environment | Workflow task tokens table name. |
 | `EVIDENCE_BUCKET` | Lambda environment | Private evidence bucket name. |
 | `STATE_MACHINE_ARN` | Lambda environment | Report workflow state machine ARN. |
-| `ALLOWED_ORIGIN` | Lambda environment | Exact CloudFront origin allowed by CORS. |
+| `ALLOWED_ORIGINS` | Lambda environment | Comma-separated exact browser origins allowed by CORS. |
+| `WEB_URL` | Lambda environment | Public frontend base URL used in tracking links. |
+| `REVIEW_TIMEOUT_SECONDS` | Lambda environment | Review task wait before a fresh token is issued. Default 259,200 (72 hours). |
 | `VITE_API_BASE_URL` | Frontend build | API Gateway invoke URL. |
 | `VITE_AWS_REGION` | Frontend build | Cognito region. |
 | `VITE_COGNITO_USER_POOL_ID` | Frontend build | Admin user pool ID. |

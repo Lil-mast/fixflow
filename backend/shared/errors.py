@@ -50,6 +50,18 @@ class Conflict(AppError):
         super().__init__("CONFLICT", message, 409, details)
 
 
+class InvalidStateTransition(AppError):
+    def __init__(self, message: str, details: dict | None = None) -> None:
+        super().__init__("INVALID_STATE_TRANSITION", message, 409, details)
+
+
+class ReviewExpired(AppError):
+    def __init__(
+        self, message: str = "The review window has expired. Refetch the report and retry."
+    ) -> None:
+        super().__init__("REVIEW_EXPIRED", message, 409)
+
+
 class RateLimited(AppError):
     def __init__(self, message: str = "Too many requests. Try again shortly.") -> None:
         super().__init__("RATE_LIMITED", message, 429)

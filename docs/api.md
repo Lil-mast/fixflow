@@ -520,7 +520,7 @@ Return the full report, audit history, and short-lived evidence URLs.
   "priority": "P2_HIGH",
   "priorityScore": 50,
   "status": "REVIEW_PENDING",
-  "version": 2,
+  "version": 3,
   "location": {
     "area": "Kariakoo",
     "latitude": -6.8189,
@@ -574,7 +574,7 @@ administrator can close an unresponsive report or re-send a clarification reques
   "decision": "APPROVE",
   "comment": "Verified the location and severity. Assigning to the roads team.",
   "publicMessage": "Report reviewed and approved for action.",
-  "expectedVersion": 2
+  "expectedVersion": 3
 }
 ```
 
@@ -591,7 +591,7 @@ administrator can close an unresponsive report or re-send a clarification reques
 {
   "reportId": "e3b0c442-98fc-4c14-9afb-f4c8996fb924",
   "status": "APPROVED",
-  "version": 3,
+  "version": 4,
   "updatedAt": "2026-11-14T19:00:00Z"
 }
 ```
@@ -623,7 +623,7 @@ does not create team identities.
   "assignedTeam": "Roads Team A",
   "comment": "Assigned to the crew covering Kariakoo.",
   "publicMessage": "Assigned to the roads team.",
-  "expectedVersion": 3
+  "expectedVersion": 4
 }
 ```
 
@@ -641,7 +641,7 @@ does not create team identities.
   "reportId": "e3b0c442-98fc-4c14-9afb-f4c8996fb924",
   "status": "IN_PROGRESS",
   "assignedTeam": "Roads Team A",
-  "version": 4,
+  "version": 5,
   "updatedAt": "2026-11-14T19:10:00Z"
 }
 ```
@@ -713,7 +713,7 @@ Submit completion evidence and a note. Accepted only from `IN_PROGRESS`.
   },
   "note": "Pothole filled, compacted, and the lane reopened.",
   "publicMessage": "Repair completed and awaiting verification.",
-  "expectedVersion": 4
+  "expectedVersion": 5
 }
 ```
 
@@ -730,7 +730,7 @@ Submit completion evidence and a note. Accepted only from `IN_PROGRESS`.
 {
   "reportId": "e3b0c442-98fc-4c14-9afb-f4c8996fb924",
   "status": "RESOLUTION_PENDING",
-  "version": 5,
+  "version": 6,
   "updatedAt": "2026-11-14T20:00:00Z"
 }
 ```
@@ -754,7 +754,7 @@ Verify or reject the submitted resolution evidence.
   "decision": "VERIFIED",
   "comment": "Evidence matches the reported location and the repair is complete.",
   "publicMessage": "Repair verified and report closed.",
-  "expectedVersion": 5
+  "expectedVersion": 6
 }
 ```
 
@@ -771,7 +771,7 @@ Verify or reject the submitted resolution evidence.
 {
   "reportId": "e3b0c442-98fc-4c14-9afb-f4c8996fb924",
   "status": "RESOLVED",
-  "version": 6,
+  "version": 7,
   "resolvedAt": "2026-11-14T21:00:00Z",
   "updatedAt": "2026-11-14T21:00:00Z"
 }

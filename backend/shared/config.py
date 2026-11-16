@@ -13,6 +13,7 @@ DEFAULT_ALLOWED_ORIGINS = "http://localhost:5173"
 DEFAULT_WEB_URL = "http://localhost:5173"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 UPLOAD_EXPIRY_SECONDS = 300
+REVIEW_TIMEOUT_SECONDS = 72 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,8 @@ class Settings:
     allowed_origins: tuple[str, ...]
     web_url: str = DEFAULT_WEB_URL
     upload_expiry_seconds: int = UPLOAD_EXPIRY_SECONDS
-    review_timeout_hours: int = 72
+    review_timeout_seconds: int = REVIEW_TIMEOUT_SECONDS
+    state_machine_arn: str = ""
 
 
 def parse_origins(raw: str) -> tuple[str, ...]:
@@ -66,5 +68,8 @@ def load_settings() -> Settings:
         allowed_origins=parse_origins(os.environ.get("ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS)),
         web_url=os.environ.get("WEB_URL", DEFAULT_WEB_URL).rstrip("/"),
         upload_expiry_seconds=int(os.environ.get("UPLOAD_EXPIRY_SECONDS", UPLOAD_EXPIRY_SECONDS)),
-        review_timeout_hours=int(os.environ.get("REVIEW_TIMEOUT_HOURS", "72")),
+        review_timeout_seconds=int(
+            os.environ.get("REVIEW_TIMEOUT_SECONDS", REVIEW_TIMEOUT_SECONDS)
+        ),
+        state_machine_arn=os.environ.get("STATE_MACHINE_ARN", ""),
     )

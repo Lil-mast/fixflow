@@ -112,6 +112,11 @@ existing item.
 after the timeout, and the decision endpoint accepts a decision from either
 `REVIEW_PENDING` or `REVIEW_EXPIRED`.
 
+A report that reaches review normally has `version = 3`: submission is version 1,
+`SUBMITTED -> VALIDATING` is version 2, and `VALIDATING -> REVIEW_PENDING` is version 3.
+Priority calculation updates the score without incrementing the version because it is not a
+lifecycle transition.
+
 ### Example item
 
 ```json
@@ -125,7 +130,7 @@ after the timeout, and the decision endpoint accepts a decision from either
   "priorityScore": 50,
   "priority": "P2_HIGH",
   "status": "REVIEW_PENDING",
-  "version": 2,
+  "version": 3,
   "area": "Kariakoo",
   "location": { "latitude": -6.8189, "longitude": 39.2803 },
   "assignedTeam": null,

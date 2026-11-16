@@ -1,0 +1,1 @@
+"""Admin review decision endpoint."""

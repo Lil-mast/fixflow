@@ -1,0 +1,355 @@
+{
+  "Comment": "FixFlow report workflow: submission through administrator review. Phase 3 ends after APPROVED, REJECTED, or NEEDS_INFO.",
+  "StartAt": "ResumeChoice",
+  "States": {
+    "ResumeChoice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.resumeFrom",
+          "StringEquals": "REVIEW",
+          "Next": "StoreReviewToken"
+        }
+      ],
+      "Default": "MarkValidating"
+    },
+    "MarkValidating": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${TransitionReportFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "targetStatus": "VALIDATING",
+          "expectedStatuses": ["SUBMITTED"],
+          "action": "VALIDATION_STARTED",
+          "visibility": "ADMIN",
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultSelector": {
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.transition",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "Next": "ValidateReport"
+    },
+    "ValidateReport": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ValidateReportFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId"
+        }
+      },
+      "ResultSelector": {
+        "valid.$": "$.Payload.valid",
+        "reasonCode.$": "$.Payload.reasonCode"
+      },
+      "ResultPath": "$.validation",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "Next": "ValidationResult"
+    },
+    "ValidationResult": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.validation.valid",
+          "BooleanEquals": false,
+          "Next": "MarkValidationFailed"
+        }
+      ],
+      "Default": "CalculatePriority"
+    },
+    "MarkValidationFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${TransitionReportFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "targetStatus": "VALIDATION_FAILED",
+          "expectedStatuses": ["VALIDATING"],
+          "action": "VALIDATION_FAILED",
+          "reasonCode.$": "$.validation.reasonCode",
+          "visibility": "ADMIN",
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultSelector": {
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.transition",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "End": true
+    },
+    "CalculatePriority": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${CalculatePriorityFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId"
+        }
+      },
+      "ResultSelector": {
+        "priority.$": "$.Payload.priority",
+        "priorityScore.$": "$.Payload.priorityScore"
+      },
+      "ResultPath": "$.priority",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "Next": "MarkReviewPending"
+    },
+    "MarkReviewPending": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${TransitionReportFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "targetStatus": "REVIEW_PENDING",
+          "expectedStatuses": ["VALIDATING"],
+          "action": "REVIEW_REQUESTED",
+          "visibility": "ADMIN",
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultSelector": {
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.transition",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "Next": "StoreReviewToken"
+    },
+    "StoreReviewToken": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${StoreTaskTokenFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "taskType": "REVIEW",
+          "taskToken.$": "$$.Task.Token",
+          "executionArn.$": "$$.Execution.Id",
+          "timeoutSeconds": ${ReviewTimeoutSeconds}
+        }
+      },
+      "TimeoutSeconds": ${ReviewTimeoutSeconds},
+      "ResultSelector": {
+        "decision.$": "$.decision"
+      },
+      "ResultPath": "$.review",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "ResultPath": "$.timeout",
+          "Next": "MarkReviewExpired"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "Next": "ReviewDecision"
+    },
+    "ReviewDecision": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.review.decision",
+          "StringEquals": "APPROVE",
+          "Next": "MarkApproved"
+        },
+        {
+          "Variable": "$.review.decision",
+          "StringEquals": "REJECT",
+          "Next": "MarkRejected"
+        },
+        {
+          "Variable": "$.review.decision",
+          "StringEquals": "REQUEST_INFO",
+          "Next": "MarkNeedsInfo"
+        }
+      ],
+      "Default": "RecordWorkflowFailure"
+    },
+    "MarkApproved": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${TransitionReportFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "targetStatus": "APPROVED",
+          "expectedStatuses": ["REVIEW_PENDING", "REVIEW_EXPIRED", "APPROVED"],
+          "action": "REVIEW_APPROVED",
+          "visibility": "PUBLIC",
+          "publicMessage": "Report reviewed and approved for action.",
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultSelector": {
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.transition",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "End": true
+    },
+    "MarkRejected": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${TransitionReportFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "targetStatus": "REJECTED",
+          "expectedStatuses": ["REVIEW_PENDING", "REVIEW_EXPIRED", "REJECTED"],
+          "action": "REVIEW_REJECTED",
+          "visibility": "PUBLIC",
+          "publicMessage": "Report reviewed and closed.",
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultSelector": {
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.transition",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "End": true
+    },
+    "MarkNeedsInfo": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${TransitionReportFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "targetStatus": "NEEDS_INFO",
+          "expectedStatuses": ["REVIEW_PENDING", "REVIEW_EXPIRED", "NEEDS_INFO"],
+          "action": "INFO_REQUESTED",
+          "reasonCode": "INFO_REQUIRED",
+          "visibility": "PUBLIC",
+          "publicMessage": "More information is needed from the resident.",
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultSelector": {
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.transition",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "End": true
+    },
+    "MarkReviewExpired": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${TransitionReportFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "targetStatus": "REVIEW_EXPIRED",
+          "expectedStatuses": ["REVIEW_PENDING", "REVIEW_EXPIRED"],
+          "action": "REVIEW_EXPIRED",
+          "reasonCode": "REVIEW_TIMEOUT",
+          "visibility": "ADMIN",
+          "allowSameStatus": true,
+          "ignoreIfStatus": ["APPROVED", "REJECTED", "NEEDS_INFO"],
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultSelector": {
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.transition",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RecordWorkflowFailure"
+        }
+      ],
+      "Next": "StoreReviewToken"
+    },
+    "RecordWorkflowFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${RecordWorkflowFailureFunctionArn}",
+        "Payload": {
+          "reportId.$": "$.reportId",
+          "reason": "UNHANDLED_WORKFLOW_ERROR",
+          "executionArn.$": "$$.Execution.Id"
+        }
+      },
+      "ResultPath": null,
+      "Next": "WorkflowFailed"
+    },
+    "WorkflowFailed": {
+      "Type": "Fail",
+      "Error": "WorkflowFailed",
+      "Cause": "The report workflow stopped after recording a WORKFLOW_FAILED event."
+    }
+  }
+}

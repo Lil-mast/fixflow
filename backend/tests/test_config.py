@@ -29,7 +29,8 @@ def test_load_settings_has_safe_local_defaults(monkeypatch) -> None:
         "ALLOWED_ORIGINS",
         "WEB_URL",
         "UPLOAD_EXPIRY_SECONDS",
-        "REVIEW_TIMEOUT_HOURS",
+        "REVIEW_TIMEOUT_SECONDS",
+        "STATE_MACHINE_ARN",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -40,7 +41,8 @@ def test_load_settings_has_safe_local_defaults(monkeypatch) -> None:
     assert settings.reports_table == "FixFlowReports"
     assert settings.allowed_origins == ("http://localhost:5173",)
     assert settings.web_url == "http://localhost:5173"
-    assert settings.review_timeout_hours == 72
+    assert settings.review_timeout_seconds == 259200
+    assert settings.state_machine_arn == ""
 
 
 def test_load_settings_reads_template_environment(monkeypatch) -> None:
@@ -48,7 +50,8 @@ def test_load_settings_reads_template_environment(monkeypatch) -> None:
     monkeypatch.setenv("REPORTS_TABLE", "Reports")
     monkeypatch.setenv("ALLOWED_ORIGINS", "https://demo.example")
     monkeypatch.setenv("WEB_URL", "https://demo.example/")
-    monkeypatch.setenv("REVIEW_TIMEOUT_HOURS", "24")
+    monkeypatch.setenv("REVIEW_TIMEOUT_SECONDS", "86400")
+    monkeypatch.setenv("STATE_MACHINE_ARN", "arn:aws:states:us-east-1:123:stateMachine:fixflow")
 
     settings = load_settings()
 
@@ -56,4 +59,5 @@ def test_load_settings_reads_template_environment(monkeypatch) -> None:
     assert settings.reports_table == "Reports"
     assert settings.allowed_origins == ("https://demo.example",)
     assert settings.web_url == "https://demo.example"
-    assert settings.review_timeout_hours == 24
+    assert settings.review_timeout_seconds == 86400
+    assert settings.state_machine_arn.endswith("fixflow")

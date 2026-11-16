@@ -7,6 +7,7 @@ a missing TTL, a missing GSI, and a wildcard principal.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,14 @@ REQUIRED_RESOURCES = {
     "SubmitReportFunction",
     "GetPublicReportFunction",
     "GetPublicEventsFunction",
+    "ValidateReportFunction",
+    "CalculatePriorityFunction",
+    "TransitionReportFunction",
+    "StoreTaskTokenFunction",
+    "RecordWorkflowFailureFunction",
+    "ReviewReportFunction",
+    "ReportWorkflowStateMachine",
+    "WorkflowLogGroup",
     "ReportsTable",
     "ReportEventsTable",
     "WorkflowTokensTable",
@@ -122,6 +131,37 @@ def check() -> list[str]:
     allowed_origin = template.get("Parameters", {}).get("AllowedOrigin", {}).get("Default", "")
     if allowed_origin.strip() == "*":
         problems.append("AllowedOrigin must not default to a wildcard")
+
+    api_auth = resources.get("HttpApi", {}).get("Properties", {}).get("Auth", {})
+    if "CognitoAuthorizer" not in (api_auth.get("Authorizers") or {}):
+        problems.append("HttpApi is missing the CognitoAuthorizer")
+
+    review_events = (
+        resources.get("ReviewReportFunction", {}).get("Properties", {}).get("Events", {})
+    )
+    review_route = review_events.get("ReviewDecision", {}).get("Properties", {})
+    authorizer = (review_route.get("Auth") or {}).get("Authorizer")
+    if authorizer != "CognitoAuthorizer":
+        problems.append("The admin decision route is missing the JWT authorizer")
+
+    state_machine = resources.get("ReportWorkflowStateMachine", {}).get("Properties", {})
+    definition_uri = state_machine.get("DefinitionUri")
+    if not definition_uri:
+        problems.append("ReportWorkflowStateMachine is missing DefinitionUri")
+    else:
+        definition_path = (TEMPLATE.parent / definition_uri).resolve()
+        if not definition_path.is_file():
+            problems.append(f"State machine definition not found: {definition_uri}")
+        else:
+            text = definition_path.read_text(encoding="utf-8")
+            placeholders = set(re.findall(r"\$\{([A-Za-z0-9_]+)\}", text))
+            substitutions = set(state_machine.get("DefinitionSubstitutions") or {})
+            missing_substitutions = placeholders - substitutions
+            if missing_substitutions:
+                problems.append(
+                    "State machine placeholders are not substituted: "
+                    + ", ".join(sorted(missing_substitutions))
+                )
 
     return problems
 

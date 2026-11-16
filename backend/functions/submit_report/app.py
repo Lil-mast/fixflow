@@ -9,10 +9,12 @@ from shared.domain import build_new_report, request_fingerprint
 from shared.errors import Conflict, InternalError
 from shared.http import handle_api, parse_json_body
 from shared.ids import new_public_ref
+from shared.logging import log
 from shared.repository import DuplicateReport, ReportRepository
 from shared.responses import json_response
 from shared.storage import EvidenceStorage
 from shared.validation import ReportInput, validate_report_input
+from shared.workflow import WorkflowClient
 
 
 def _success(
@@ -35,16 +37,46 @@ def _success(
     )
 
 
+def _start_workflow(
+    report: dict[str, Any],
+    repository: ReportRepository,
+    flow: WorkflowClient,
+) -> None:
+    """Start the workflow, leaving ``workflowStatus = PENDING`` if the call fails.
+
+    The report is already durable at this point. A failed start must not turn a successful
+    submission into a client error; an operator alarm watches for reports that stay
+    ``PENDING``. Retrying the submission calls this again with the same execution name,
+    and ``ExecutionAlreadyExists`` counts as success.
+    """
+
+    if not flow.configured or report.get("workflowStatus") != "PENDING":
+        return
+    try:
+        execution_arn = flow.start(report["reportId"], report["publicRef"])
+        repository.mark_workflow_started(report["reportId"], execution_arn)
+        report["workflowStatus"] = "STARTED"
+    except Exception as exc:  # noqa: BLE001 - submission is already committed
+        log(
+            "error",
+            "workflow start failed",
+            reportId=report["reportId"],
+            errorType=type(exc).__name__,
+        )
+
+
 def _already_exists(
     value: ReportInput,
     repository: ReportRepository,
     runtime: Any,
     event: dict[str, Any],
+    flow: WorkflowClient,
 ) -> dict[str, Any] | None:
     existing = repository.get_report(value.report_id)
     if existing is None:
         return None
     if existing.get("requestHash") == request_fingerprint(value):
+        _start_workflow(existing, repository, flow)
         return _success(existing, runtime, event, 200)
     raise Conflict("A different report already uses this reportId.")
 
@@ -56,6 +88,7 @@ def handler(
     settings: Any = None,
     repository: ReportRepository | None = None,
     storage: EvidenceStorage | None = None,
+    workflow: WorkflowClient | None = None,
 ) -> dict[str, Any]:
     runtime = settings or load_settings()
 
@@ -67,7 +100,8 @@ def handler(
             runtime.events_table,
             region=runtime.region,
         )
-        retry_response = _already_exists(value, repo, runtime, event)
+        flow = workflow or WorkflowClient(runtime.state_machine_arn, region=runtime.region)
+        retry_response = _already_exists(value, repo, runtime, event, flow)
         if retry_response is not None:
             return retry_response
 
@@ -89,11 +123,12 @@ def handler(
         try:
             repo.create_report(new_report.report, new_report.event)
         except DuplicateReport as exc:
-            retry_response = _already_exists(value, repo, runtime, event)
+            retry_response = _already_exists(value, repo, runtime, event, flow)
             if retry_response is not None:
                 return retry_response
             raise Conflict("The report could not be created because it already exists.") from exc
 
+        _start_workflow(new_report.report, repo, flow)
         return _success(new_report.report, runtime, event, 201)
 
     return handle_api(

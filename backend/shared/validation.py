@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from shared.config import MAX_UPLOAD_BYTES
@@ -70,6 +71,14 @@ class ReportInput:
     latitude: float | None
     longitude: float | None
     evidence: EvidenceInput | None
+
+
+@dataclass(frozen=True)
+class DecisionRequest:
+    decision: str
+    comment: str | None
+    public_message: str | None
+    expected_version: int
 
 
 def _require_mapping(value: Any, field: str) -> dict[str, Any]:
@@ -291,3 +300,95 @@ def validate_report_input(payload: Any) -> ReportInput:
         longitude=longitude,
         evidence=evidence,
     )
+
+
+DECISIONS = ("APPROVE", "REJECT", "REQUEST_INFO")
+
+
+def validate_decision_request(payload: Any) -> DecisionRequest:
+    body = _require_mapping(payload, "body")
+    _reject_unknown(
+        body,
+        {"decision", "comment", "publicMessage", "expectedVersion"},
+        "body",
+    )
+
+    decision = _enum(_required(body, "decision"), "decision", DECISIONS)
+
+    comment = None
+    if body.get("comment") is not None:
+        comment = _string(body["comment"], "comment", minimum=1, maximum=2000)
+    if decision in {"REJECT", "REQUEST_INFO"} and comment is None:
+        raise ValidationError(
+            "comment is required for REJECT and REQUEST_INFO.",
+            {"field": "comment"},
+        )
+
+    public_message = None
+    if body.get("publicMessage") is not None:
+        public_message = _string(body["publicMessage"], "publicMessage", minimum=1, maximum=280)
+
+    expected_version = _positive_int(_required(body, "expectedVersion"), "expectedVersion")
+
+    return DecisionRequest(
+        decision=decision,
+        comment=comment,
+        public_message=public_message,
+        expected_version=expected_version,
+    )
+
+
+def _stored_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def report_record_reason(report: dict[str, Any]) -> str | None:
+    """Return a stable reason code when a stored report is not workflow-valid.
+
+    Submission already validates the request. This check is a defensive guard against a
+    partial write, a manual edit, or a future write path that bypasses validation.
+    """
+
+    if report.get("category") not in CATEGORIES:
+        return "INVALID_CATEGORY"
+    if report.get("severity") not in SEVERITIES:
+        return "INVALID_SEVERITY"
+
+    description = report.get("description")
+    if not isinstance(description, str) or not 10 <= len(description) <= 2000:
+        return "INVALID_DESCRIPTION"
+
+    area = report.get("area")
+    if not isinstance(area, str) or not 2 <= len(area) <= 120:
+        return "INVALID_AREA"
+
+    location = report.get("location")
+    if location is not None:
+        if not isinstance(location, dict):
+            return "INVALID_COORDINATES"
+        latitude = _stored_number(location.get("latitude"))
+        longitude = _stored_number(location.get("longitude"))
+        if (
+            latitude is None
+            or longitude is None
+            or not -90 <= latitude <= 90
+            or not -180 <= longitude <= 180
+        ):
+            return "INVALID_COORDINATES"
+
+    evidence_key = report.get("evidenceKey")
+    if evidence_key is not None:
+        if not isinstance(evidence_key, str) or not evidence_key.startswith("evidence/"):
+            return "INVALID_EVIDENCE_METADATA"
+        if report.get("evidenceContentType") not in CONTENT_TYPE_EXTENSIONS:
+            return "INVALID_EVIDENCE_METADATA"
+        size = _stored_number(report.get("evidenceSize"))
+        if size is None or not 1 <= size <= MAX_UPLOAD_BYTES:
+            return "INVALID_EVIDENCE_METADATA"
+
+    if not isinstance(report.get("publicRef"), str):
+        return "MISSING_PUBLIC_REF"
+    return None

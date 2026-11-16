@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >-
-  FixFlow - serverless civic issue reporting. Phase 1 foundation: HTTP API, health
-  endpoint, DynamoDB tables, private evidence bucket, private web bucket behind
-  CloudFront, and the Cognito admin pool.
+  FixFlow - serverless civic issue reporting. Phase 3 adds the Step Functions report
+  workflow, the Cognito-protected admin review endpoint, and transactional review
+  callbacks.
 
 Parameters:
   Stage:
@@ -26,12 +26,14 @@ Parameters:
       Public frontend base URL used to build tracking links. Set this to the CloudFront
       URL after the first deployment.
 
-  ReviewTimeoutHours:
+  ReviewTimeoutSeconds:
     Type: Number
-    Default: 72
-    MinValue: 1
-    MaxValue: 336
-    Description: How long the review task waits before expiring and issuing a fresh token.
+    Default: 259200
+    MinValue: 60
+    MaxValue: 1209600
+    Description: >-
+      How long the review task waits before expiring and issuing a fresh token. The
+      default is 72 hours.
 
   CognitoDomainPrefix:
     Type: String
@@ -61,7 +63,8 @@ Globals:
         TOKENS_TABLE: !Ref TokensTable
         EVIDENCE_BUCKET: !Ref EvidenceBucket
         WEB_BUCKET: !Ref WebBucket
-        REVIEW_TIMEOUT_HOURS: !Ref ReviewTimeoutHours
+        REVIEW_TIMEOUT_SECONDS: !Ref ReviewTimeoutSeconds
+        STATE_MACHINE_ARN: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:fixflow-report-workflow-${Stage}"
 
 Resources:
   HttpApi:
@@ -82,6 +85,14 @@ Resources:
       DefaultRouteSettings:
         ThrottlingBurstLimit: 50
         ThrottlingRateLimit: 25
+      Auth:
+        Authorizers:
+          CognitoAuthorizer:
+            JwtConfiguration:
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${AdminUserPool}"
+              audience:
+                - !Ref AdminUserPoolClient
+            IdentitySource: "$request.header.Authorization"
 
   HealthFunction:
     Type: AWS::Serverless::Function
@@ -141,6 +152,11 @@ Resources:
               Action:
                 - s3:PutObject
               Resource: !Sub "${EvidenceBucket.Arn}/evidence/*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: !GetAtt ReportWorkflowStateMachine.Arn
       Events:
         SubmitReport:
           Type: HttpApi
@@ -198,6 +214,175 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /public/reports/{publicRef}/events
             Method: GET
+
+  ValidateReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.validate_report.app.handler
+      Description: Workflow validation step. Returns a business result, not an error.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt ReportsTable.Arn
+
+  CalculatePriorityFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.calculate_priority.app.handler
+      Description: Apply the published deterministic priority score.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:TransactWriteItems
+              Resource:
+                - !GetAtt ReportsTable.Arn
+                - !GetAtt ReportEventsTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt ReportEventsTable.Arn
+
+  TransitionReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.transition_report.app.handler
+      Description: Apply a lifecycle transition and append its event atomically.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:TransactWriteItems
+              Resource:
+                - !GetAtt ReportsTable.Arn
+                - !GetAtt ReportEventsTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt ReportEventsTable.Arn
+
+  StoreTaskTokenFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.store_task_token.app.handler
+      Description: Persist a Step Functions callback token before waiting.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+              Resource: !GetAtt WorkflowTokensTable.Arn
+
+  RecordWorkflowFailureFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.record_workflow_failure.app.handler
+      Description: Record a workflow failure without changing the lifecycle status.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:TransactWriteItems
+              Resource:
+                - !GetAtt ReportsTable.Arn
+                - !GetAtt ReportEventsTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt ReportEventsTable.Arn
+
+  ReviewReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: functions.review_report.app.handler
+      Description: Apply an administrator decision, consume the token, and resume the workflow.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:TransactWriteItems
+              Resource:
+                - !GetAtt ReportsTable.Arn
+                - !GetAtt ReportEventsTable.Arn
+                - !GetAtt WorkflowTokensTable.Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt ReportEventsTable.Arn
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+              Resource: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:*"
+      Events:
+        ReviewDecision:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /admin/reports/{reportId}/decision
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  WorkflowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/states/fixflow-report-workflow-${Stage}"
+      RetentionInDays: 14
+
+  ReportWorkflowStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "fixflow-report-workflow-${Stage}"
+      Type: STANDARD
+      DefinitionUri: ../backend/statemachines/report_workflow.asl.json
+      DefinitionSubstitutions:
+        ValidateReportFunctionArn: !GetAtt ValidateReportFunction.Arn
+        CalculatePriorityFunctionArn: !GetAtt CalculatePriorityFunction.Arn
+        TransitionReportFunctionArn: !GetAtt TransitionReportFunction.Arn
+        StoreTaskTokenFunctionArn: !GetAtt StoreTaskTokenFunction.Arn
+        RecordWorkflowFailureFunctionArn: !GetAtt RecordWorkflowFailureFunction.Arn
+        ReviewTimeoutSeconds: !Ref ReviewTimeoutSeconds
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt WorkflowLogGroup.Arn
+        IncludeExecutionData: false
+        Level: ERROR
+      Tracing:
+        Enabled: true
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource:
+                - !GetAtt ValidateReportFunction.Arn
+                - !GetAtt CalculatePriorityFunction.Arn
+                - !GetAtt TransitionReportFunction.Arn
+                - !GetAtt StoreTaskTokenFunction.Arn
+                - !GetAtt RecordWorkflowFailureFunction.Arn
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub "${WorkflowLogGroup.Arn}:*"
 
   ReportsTable:
     Type: AWS::DynamoDB::Table
@@ -567,6 +752,10 @@ Outputs:
   ApiUrl:
     Description: Base URL of the HTTP API.
     Value: !GetAtt HttpApi.ApiEndpoint
+
+  ReportWorkflowStateMachineArn:
+    Description: ARN of the report Step Functions state machine.
+    Value: !Ref ReportWorkflowStateMachine
 
   ReportsTableName:
     Description: DynamoDB table for current report state.
